@@ -279,7 +279,7 @@ export function shortId(len = 5) {
   return out;
 }
 
-/** 毫秒时间戳 → 定长字符串，保证 KV key 字典序 == 时间序 */
+/** 毫秒时间戳 → 定长字符串，保证 R2 key 字典序 == 时间序 */
 export function tsKey(ts) {
   return String(Math.max(0, Math.floor(ts))).padStart(14, '0');
 }

@@ -21,7 +21,7 @@ const CODE_VERSION = '2026-10-01 · 多源翻译降级';
 function createApp(env) {
   return {
     env,
-    store: new Store(env.BOT_KV),
+    store: new Store(env.BOT_R2),
     bot: new Telegram(env.BOT_TOKEN),
     plugins: PLUGINS,
     commands: buildCommandMap(PLUGINS),
@@ -138,7 +138,7 @@ function statusPage(env, url) {
 
   const missing = [];
   if (!env.BOT_TOKEN) missing.push('BOT_TOKEN 未配置');
-  if (!env.BOT_KV) missing.push('BOT_KV 未绑定');
+  if (!env.BOT_R2) missing.push('BOT_R2 未绑定');
   if (!env.WEBHOOK_SECRET) missing.push('WEBHOOK_SECRET 未配置');
 
   let banner;
@@ -274,7 +274,7 @@ async function diagnosePage(env) {
     ['WEBHOOK_SECRET', Boolean(env.WEBHOOK_SECRET), env.WEBHOOK_SECRET
       ? '已配置'
       : '缺失 —— 没有它，任何人都能伪造消息打你的机器人'],
-    ['BOT_KV', Boolean(env.BOT_KV), env.BOT_KV
+    ['BOT_R2', Boolean(env.BOT_R2), env.BOT_R2
       ? '已绑定'
       : '缺失 —— 订阅、提醒、监控都无法保存'],
     ['AI', Boolean(env.AI), env.AI
