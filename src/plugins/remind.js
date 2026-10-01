@@ -2,7 +2,7 @@
  * plugins/remind.js —— 定时提醒
  *
  * Key 设计：rm:{14位补零时间戳}:{id}
- *   KV 的 list 按 key 字典序返回，补零后字典序 == 时间序，
+ *   R2 的 list 按 key 字典序返回，补零后字典序 == 时间序，
  *   所以 cron 从头扫、一旦遇到未到期的就可以立刻停止。
  */
 import { esc, parseWhen, humanizeUntil, formatInTz, tsKey, shortId } from '../utils.js';
@@ -196,16 +196,16 @@ async function cronRemind({ store, bot, now }) {
   let scanned = 0;
 
   outer: do {
-    const res = await store.kv.list({ prefix: 'rm:', cursor, limit: 200 });
+    const page = await store.listPage('rm:', cursor, 200);
 
-    for (const k of res.keys) {
-      const at = Number(k.name.split(':')[1]);
+    for (const name of page.names) {
+      const at = Number(name.split(':')[1]);
       // 字典序 == 时间序：一旦遇到未到期，后面的都未到期，直接停
       if (at > now) break outer;
 
       scanned++;
-      const item = await store.getJSON(k.name);
-      await store.del(k.name);
+      const item = await store.getJSON(name);
+      await store.del(name);
 
       if (!item) continue;
 
@@ -230,6 +230,6 @@ async function cronRemind({ store, bot, now }) {
       if (scanned > 200) break outer; // 单次 tick 的安全上限
     }
 
-    cursor = res.list_complete ? null : res.cursor;
+    cursor = page.cursor;
   } while (cursor);
 }
