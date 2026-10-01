@@ -88,20 +88,24 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes('api.open-meteo.com')) {
     return json({
       current: {
-        time: '2026-10-01T10:00',
+        // 真实情况下 current.time 是 15 分钟粒度（如 10:40），不是整点
+        time: '2026-10-01T10:40',
         temperature_2m: 18.5, relative_humidity_2m: 45, apparent_temperature: 17.2,
         dew_point_2m: 6.1, weather_code: 1, wind_speed_10m: 3.4,
         wind_direction_10m: 135, wind_gusts_10m: 6.8, pressure_msl: 1013.2,
         cloud_cover: 40, visibility: 24140, precipitation: 0,
       },
       hourly: {
+        // 覆盖 10:00~20:00；查询发生在 10:40，所以「未来」应从 11:00 起
         time: [
           '2026-10-01T10:00', '2026-10-01T11:00', '2026-10-01T12:00',
           '2026-10-01T13:00', '2026-10-01T14:00', '2026-10-01T15:00',
+          '2026-10-01T16:00', '2026-10-01T17:00', '2026-10-01T18:00',
+          '2026-10-01T19:00', '2026-10-01T20:00',
         ],
-        temperature_2m: [18.5, 19.4, 20.8, 21.6, 22.1, 22.0],
-        weather_code: [1, 1, 2, 2, 3, 3],
-        precipitation_probability: [5, 5, 10, 10, 15, 20],
+        temperature_2m: [18.5, 19.4, 20.8, 21.6, 22.1, 22.0, 21.2, 20.1, 18.8, 17.5, 16.9],
+        weather_code: [1, 1, 2, 2, 3, 3, 61, 61, 80, 3, 2],
+        precipitation_probability: [5, 5, 10, 10, 15, 20, 70, 75, 60, 30, 15],
       },
       daily: {
         time: ['2026-10-01', '2026-10-02', '2026-10-03'],
@@ -210,6 +214,16 @@ check('逐日含 UV / 降水', has(r, 'UV') && has(r, '降水'));
 check('含空气质量段', has(r, '空气质量') && has(r, 'AQI') && has(r, 'PM2.5'), r.slice(0, 160));
 check('含日出日落与昼长', has(r, '日出') && has(r, '日落') && has(r, '昼长'));
 check('含逐小时预报', has(r, '未来 6 小时'));
+// 逐小时必须从「下一个整点」开始：查询时刻是 10:40，当前小时(10:00)属「此刻」，不该出现在「未来」里
+{
+  const seg = r.split('未来 6 小时')[1]?.split('未来 3 天')[0] || '';
+  check(
+    '逐小时从下一个整点开始（跳过当前小时 10:00）',
+    seg.includes('11:00') && !seg.includes('10:00'),
+    seg.slice(0, 140)
+  );
+  check('逐小时恰好 6 条', (seg.match(/\d{2}:\d{2}/g) || []).length === 6, seg.slice(0, 160));
+}
 // 分区顺序：此刻信息（实况→云量→空气质量→日出）必须排在预报之前
 {
   const iCloud = r.indexOf('云量');

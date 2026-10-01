@@ -354,13 +354,20 @@ function fmtDaylight(seconds) {
   return `${h} 小时 ${m} 分`;
 }
 
-/** 在逐小时数组里找到「当前时刻」对应的下标 */
+/**
+ * 在逐小时数组里找到「下一个整点」的下标。
+ *
+ * 用严格大于（>）而不是大于等于（>=）：当前所处的这一小时属于「此刻」，
+ * 已经由「实况」覆盖了；从下一个整点开始才真正算「未来」。
+ * 例如 15:40 查询，应从 16:00 开始列，而不是 15:00。
+ *
+ * 返回 -1 表示已到预报末尾（无未来整点可列）。
+ */
 function findHourIndex(times, currentTime) {
   if (!times.length) return -1;
   if (!currentTime) return 0;
   const key = String(currentTime).slice(0, 13);
-  const idx = times.findIndex((t) => String(t).slice(0, 13) >= key);
-  return idx >= 0 ? idx : 0;
+  return times.findIndex((t) => String(t).slice(0, 13) > key);
 }
 
 function placeLabel(place) {
@@ -429,13 +436,14 @@ function renderWeather(place, data, { days = 3, air = null, hours = 6 } = {}) {
     );
   }
 
-  /* ── 逐小时 ── */
+  /* ── 逐小时（从下一个整点开始） ── */
   const hTimes = hourly.time || [];
   if (hours > 0 && hTimes.length) {
     const start = findHourIndex(hTimes, cur.time);
     if (start >= 0) {
-      lines.push('', `<b>未来 ${hours} 小时</b>`);
-      for (let i = start; i < Math.min(start + hours, hTimes.length); i++) {
+      const end = Math.min(start + hours, hTimes.length);
+      lines.push('', `<b>未来 ${end - start} 小时</b>`);
+      for (let i = start; i < end; i++) {
         const [hIcon] = describe(hourly.weather_code?.[i]);
         const t = round(hourly.temperature_2m?.[i]);
         const p = hourly.precipitation_probability?.[i];
