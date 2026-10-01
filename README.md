@@ -159,15 +159,24 @@ https://tg-multibot.你的账号.workers.dev
 
 #### 第 4 步 · 配置密钥
 
-进入这个 Worker → **Settings** → **Variables & Secrets**，添加两个变量，类型都选 **Secret**：
+进入这个 Worker → **Settings** → **Variables & Secrets**，添加两个变量。
 
-| 名称 | 值 |
-|---|---|
-| `BOT_TOKEN` | 第 2 步拿到的 Token |
-| `WEBHOOK_SECRET` | 自己敲一串随机字符，例如 `7f3a9c2e5b8d1f4a6e9c0b3d7a2f5e8c` |
+> ⚠️ **类型必须选 `Secret`，不要选 `Text`。**
+>
+> `Text` 类型的变量会在下次部署（包括 `git push` 触发的自动部署）时被配置文件覆盖掉 ——
+> 表现就是「我明明在面板里加了 BOT_TOKEN，push 一次代码后就没了」。
+> `Secret` 类型不受部署影响，只有你显式执行 `wrangler secret delete` 才会被删除。
+
+| 名称 | 类型 | 值 |
+|---|---|---|
+| `BOT_TOKEN` | **Secret** | 第 2 步拿到的 Token |
+| `WEBHOOK_SECRET` | **Secret** | 自己敲一串随机字符，例如 `7f3a9c2e5b8d1f4a6e9c0b3d7a2f5e8c` |
 
 保存后回到 **Deployments**，点最新一次部署右侧的 **⋯ → Retry deployment**。
 （密钥要重新部署一次才会注入到运行环境。）
+
+> 项目已在 `wrangler.toml` 里设了 `keep_vars = true` 作为双保险，即使误选成 Text 也不会被清掉。
+> 但还是建议用 Secret —— 明文变量在面板里是直接可见的。
 
 #### 第 5 步 · 一键注册 Webhook
 
@@ -517,6 +526,25 @@ npx wrangler tail
 - 命令行路径：`npx wrangler deploy`
 
 改 `wrangler.toml` 里的 `[vars]`（比如默认时区）也要重新部署一次才生效。
+
+**Q：面板里加的 BOT_TOKEN，push 代码后就消失了？**
+
+因为它是按 **Text（明文变量）** 加的。
+
+`wrangler deploy` 会把 Worker 的变量同步成配置文件里 `[vars]` 的内容 —— 面板里手动加的非 Secret 变量会被这次同步清掉。
+这不是 bug，是 Cloudflare 的「配置文件即唯一事实来源」设计。
+
+两个解法，建议都做：
+
+1. **改成 `Secret` 类型** —— 把原来那两条删掉重建，类型选 `Secret`。
+   Secrets 只有你显式执行 `wrangler secret delete` 才会消失，任何部署都不会动它。
+2. **确认 `wrangler.toml` 里有 `keep_vars = true`** —— 这会让 Wrangler 在部署时保留面板里的变量。
+   本项目默认已经开启。
+
+改完记得 **重新部署一次**（Deployments → Retry deployment），变量才会注入到运行环境。
+
+> 判断方法：在面板的 Variables & Secrets 页面，Secret 类型的值显示为 `********`，
+> Text 类型的值直接显示明文。看到明文就说明配错了。
 
 **Q：翻译报 429 /「翻译暂时不可用」？**
 
