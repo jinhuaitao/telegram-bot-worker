@@ -96,6 +96,7 @@
 | 每个插件独立 try/catch | 一个插件抛错不影响其他插件和整体调度 |
 | `wrangler.toml` 只写绑定名不写 ID | 用 Wrangler 的自动预置，面板连 GitHub 和 CLI 两条路都不用手动建资源 |
 | Worker 自带 `/setup` 端点 | 面板部署的用户不必装命令行工具，浏览器打开一个地址就能注册 Webhook |
+| 翻译做成多源降级链 | Google 公开端点从 Cloudflare 的共享出口 IP 调用极易撞 429，单源方案会把错误直接抛给用户 |
 
 ---
 
@@ -320,8 +321,13 @@ BOT_TOKEN=你的token WEBHOOK_SECRET=你设的密钥 \
 /tr fr Hello             → Bonjour
 ```
 
-> 默认用 Google 翻译的公开端点，无需 Key。
-> 如果被限流，可以在 `wrangler.toml` 里把 `TRANSLATE_PROVIDER` 改成 `mymemory`。
+> **多源自动降级**：翻译会按 `Workers AI → Google → MyMemory` 的顺序尝试，
+> 任何一个源限流（429）或报错都自动换下一个，用户无感。全部失败时才会提示，
+> 并附上每个源的失败原因。
+>
+> 绑定 Workers AI 后它会排在最前面 —— 那是 Cloudflare 自家的模型，
+> 不经过第三方公开端点，也就不会遇到 429。想强制某个源优先，
+> 把 `wrangler.toml` 里的 `TRANSLATE_PROVIDER` 改成 `ai` / `google` / `mymemory`。
 
 ### ⚙️ 设置
 
@@ -451,6 +457,7 @@ export default {
 | KV 读取 | 10 万次/天 | 每次 cron 约几次读 |
 | KV 写入 | 1000 次/天 | 提醒/监控状态更新 |
 | CPU 时间 | 10 ms/请求 | 见下方说明 |
+| Workers AI（翻译用） | 10000 neurons/天 | 翻译 100 字约 6 neurons ≈ **1500 次/天** |
 | 构建分钟数（仅面板部署路径） | 3000 分钟/月 | 每次 push 约 1 分钟 |
 
 **几个需要注意的点：**
@@ -511,10 +518,40 @@ npx wrangler tail
 
 改 `wrangler.toml` 里的 `[vars]`（比如默认时区）也要重新部署一次才生效。
 
+**Q：翻译报 429 /「翻译暂时不可用」？**
+
+`429` 是限流。Google 的公开翻译端点是从 Cloudflare 的**共享出口 IP** 调用的，高峰期很容易撞上。
+
+项目本身已经做了自动降级（Google 挂了自动换 MyMemory），所以正常情况下你看不到这个报错。只有当**所有源同时不可用**时才会提示 —— 比如 Google 被限流、同时 MyMemory 的每日 5000 字额度也用完了。
+
+两个解法：
+
+**解法一 · 启用 Workers AI（推荐，一劳永逸）**
+
+确认 `wrangler.toml` 里有这两行，然后重新部署：
+
+```toml
+[ai]
+binding = "AI"
+```
+
+Workers AI 是 Cloudflare 自家的翻译模型，不经过第三方公开端点，不会 429。免费额度 10000 neurons/天，翻译 100 字约消耗 6 neurons，折算约 **1500 次/天**。绑定后它会自动排到降级链最前面。
+
+> 如果你的账号暂时用不了 Workers AI（部署时报错），把这两行注释掉即可，翻译会退回 Google / MyMemory 的组合。
+
+**解法二 · 给 MyMemory 加个邮箱**
+
+免费额度会从 5000 字/天 提到 50000 字/天：
+
+```toml
+[vars]
+MYMEMORY_EMAIL = "you@example.com"
+```
+
 **Q：怎么调试插件逻辑？**
 
 ```bash
-npm test              # 单元 + 入口 + 端到端集成测试（108 项）
+npm test              # 单元 + 入口 + 端到端集成测试（125 项）
 npx wrangler dev      # 本地起一个 Worker，配合 ngrok 之类做联调
 ```
 
@@ -558,5 +595,5 @@ telegram-bot-worker/
 └── test/
     ├── unit.test.mjs          # 时区 / 时间解析 / key 排序 单元测试（35 项）
     ├── entry.test.mjs         # Worker 入口、路由边界、Webhook 安全校验与自注册（29 项）
-    └── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖（44 项）
+    └── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖（61 项）
 ```

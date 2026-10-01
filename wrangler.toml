@@ -21,12 +21,33 @@ crons = ["* * * * *"]
 [[kv_namespaces]]
 binding = "BOT_KV"
 
+# ── Workers AI（翻译用）──────────────────────────────────────
+#
+# 绑定后 /tr 会优先用 Cloudflare 自家的 m2m100 翻译模型，
+# 不再依赖 Google 的公开端点，也就不会遇到 429 限流。
+#
+# 免费额度：10000 neurons/天。翻译 100 字大约消耗 6 neurons，
+# 折算下来每天能翻 1500 次左右，个人使用绰绰有余。
+#
+# 如果你的账号暂时用不了 Workers AI（部署时报错），
+# 把下面两行注释掉即可 —— 翻译会自动降级到 Google / MyMemory。
+[ai]
+binding = "AI"
+
 # ── 普通环境变量（非敏感，会随代码一起提交）─────────────────
 [vars]
 DEFAULT_TZ = "Asia/Shanghai"
-TRANSLATE_PROVIDER = "google"
+
+# 翻译源优先级。auto = 自动排序（绑了 AI 就 AI 优先，否则 Google 优先），
+# 任何一个源限流或报错都会自动降级到下一个，不会把错误抛给用户。
+# 也可以填 google / mymemory / ai 把某个源强制提到最前面。
+TRANSLATE_PROVIDER = "auto"
+
 # 单次 cron 最多检查多少个监控项，防止 subrequest 超限
 MAX_MONITOR_PER_TICK = "20"
+
+# 可选：填上你的邮箱，MyMemory 的免费额度会从 5000 字/天 提到 50000 字/天
+# MYMEMORY_EMAIL = "you@example.com"
 
 # ── 敏感变量（密钥）──────────────────────────────────────────
 # 下面这两个不要写在这里，它们是密钥：
