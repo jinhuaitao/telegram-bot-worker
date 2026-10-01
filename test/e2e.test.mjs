@@ -17,25 +17,32 @@ const check = (label, cond, extra = '') => {
   else { fail++; console.log(`  ✖ ${label}${extra ? `\n      ${extra}` : ''}`); }
 };
 
-/* ─────────── Mock KV ─────────── */
-class MockKV {
+/* ─────────── Mock R2 ─────────── */
+class MockR2 {
   constructor() { this.map = new Map(); }
-  async get(key, type) {
+  async get(key) {
     const v = this.map.get(key);
     if (v === undefined) return null;
-    return type === 'json' ? JSON.parse(v) : v;
+    return {
+      key,
+      text: async () => v,
+      json: async () => JSON.parse(v),
+    };
   }
-  async put(key, value) { this.map.set(key, value); }
-  async delete(key) { this.map.delete(key); }
+  async put(key, value) { this.map.set(key, String(value)); return { key }; }
+  async delete(keyOrKeys) {
+    for (const k of Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys]) this.map.delete(k);
+  }
   async list({ prefix = '', cursor, limit = 1000 } = {}) {
     const all = [...this.map.keys()].filter((k) => k.startsWith(prefix)).sort();
     const start = cursor ? Number(cursor) : 0;
     const slice = all.slice(start, start + limit);
     const next = start + limit;
+    const truncated = next < all.length;
     return {
-      keys: slice.map((name) => ({ name })),
-      list_complete: next >= all.length,
-      cursor: String(next),
+      objects: slice.map((key) => ({ key })),
+      truncated,
+      cursor: truncated ? String(next) : undefined,
     };
   }
 }
@@ -149,14 +156,14 @@ globalThis.fetch = async (url, opts = {}) => {
 /* ─────────── 组装 app ─────────── */
 const env = {
   BOT_TOKEN: '123:TEST',
-  BOT_KV: new MockKV(),
+  BOT_R2: new MockR2(),
   DEFAULT_TZ: 'Asia/Shanghai',
   TRANSLATE_PROVIDER: 'auto',
   MAX_MONITOR_PER_TICK: '20',
 };
 const app = {
   env,
-  store: new Store(env.BOT_KV),
+  store: new Store(env.BOT_R2),
   bot: new Telegram(env.BOT_TOKEN),
   plugins: PLUGINS,
   commands: buildCommandMap(PLUGINS),
@@ -364,31 +371,35 @@ check('静音开启', has(r, '静音'));
 await send('/mute off');
 
 console.log('\n【Cron 调度】');
+/* 便捷读取 mock R2：key 列表 / 单个对象内容 */
+const r2Keys = async (prefix) => (await env.BOT_R2.list({ prefix })).objects.map((o) => o.key);
+const r2Get = async (key) => (await env.BOT_R2.get(key)).json();
+
 // 手动塞一条「已到期」的提醒，验证派发
 const past = Date.now() - 1000;
-await env.BOT_KV.put(`rm:${tsKey(past)}:${CHAT}:zzzzz`, JSON.stringify({
+await env.BOT_R2.put(`rm:${tsKey(past)}:${CHAT}:zzzzz`, JSON.stringify({
   id: 'zzzzz', chatId: CHAT, text: '到点啦', at: past, tz: 'Asia/Shanghai', createdAt: past - 60000,
 }));
 outbox.length = 0;
 await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
 check('到期提醒被派发', outbox.some((m) => has(m.text, '到点啦')), JSON.stringify(outbox.map(m => m.text)));
-let remaining = (await env.BOT_KV.list({ prefix: 'rm:' })).keys.map((k) => k.name);
+let remaining = await r2Keys('rm:');
 check('到期提醒被清除', !remaining.some((n) => n.endsWith(':zzzzz')), JSON.stringify(remaining));
 check('未到期的「提交周报」仍在', remaining.some((n) => n.endsWith(':') === false) && remaining.length >= 1);
 
 // 未到期的提醒不应被派发
 const future = Date.now() + 3600000;
-await env.BOT_KV.put(`rm:${tsKey(future)}:${CHAT}:yyyyy`, JSON.stringify({
+await env.BOT_R2.put(`rm:${tsKey(future)}:${CHAT}:yyyyy`, JSON.stringify({
   id: 'yyyyy', chatId: CHAT, text: '还没到', at: future, tz: 'Asia/Shanghai', createdAt: Date.now(),
 }));
 outbox.length = 0;
 await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
 check('未到期提醒不被派发', !outbox.some((m) => has(m.text, '还没到')));
-remaining = (await env.BOT_KV.list({ prefix: 'rm:' })).keys.map((k) => k.name);
+remaining = await r2Keys('rm:');
 check('未到期提醒仍保留', remaining.some((n) => n.endsWith(':yyyyy')), JSON.stringify(remaining));
 
 // 天气定时推送：塞一条「已到点」的订阅（pushAt=00:00 必然已过）
-await env.BOT_KV.put(`wx:${CHAT}:${encodeURIComponent('北京')}`, JSON.stringify({
+await env.BOT_R2.put(`wx:${CHAT}:${encodeURIComponent('北京')}`, JSON.stringify({
   chatId: CHAT, city: '北京', label: '北京 · 北京市',
   latitude: 39.9, longitude: 116.4, timezone: 'Asia/Shanghai',
   pushAt: '00:00', lastPushDate: null, createdAt: Date.now() - 60000,
@@ -405,10 +416,10 @@ await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
 check('天气推送当日不重复', !outbox.some((m) => has(m.text, '早安')));
 
 // 监控告警：把监控项的 lastCheck 拨到过去使其到期，再跑一轮
-for (const k of (await env.BOT_KV.list({ prefix: 'mon:' })).keys) {
-  const it = JSON.parse(await env.BOT_KV.get(k.name));
+for (const k of await r2Keys('mon:')) {
+  const it = await r2Get(k);
   it.lastCheck = Date.now() - 999999;
-  await env.BOT_KV.put(k.name, JSON.stringify(it));
+  await env.BOT_R2.put(k, JSON.stringify(it));
 }
 outbox.length = 0;
 await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
@@ -418,10 +429,10 @@ check('告警内容含问题描述', alerts.some((m) => has(m.text, '503')), JSO
 
 // 再次运行：不应重复告警（防抖动）
 outbox.length = 0;
-for (const k of (await env.BOT_KV.list({ prefix: 'mon:' })).keys) {
-  const it = JSON.parse(await env.BOT_KV.get(k.name));
+for (const k of await r2Keys('mon:')) {
+  const it = await r2Get(k);
   it.lastCheck = Date.now() - 999999;
-  await env.BOT_KV.put(k.name, JSON.stringify(it));
+  await env.BOT_R2.put(k, JSON.stringify(it));
 }
 await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
 check('持续故障不重复告警', outbox.filter((m) => has(m.text, '异常告警')).length === 0);

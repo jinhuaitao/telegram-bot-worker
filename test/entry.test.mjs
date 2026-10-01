@@ -38,14 +38,14 @@ const req = (method, path = '/', headers = {}, body) =>
 
 const SECRET = 'right-secret';
 const authHeaders = { 'X-Telegram-Bot-Api-Secret-Token': SECRET };
-const env = { BOT_TOKEN: '123:TEST', WEBHOOK_SECRET: SECRET, BOT_KV: {} };
+const env = { BOT_TOKEN: '123:TEST', WEBHOOK_SECRET: SECRET, BOT_R2: {} };
 
 console.log('\n【导出契约】');
 check('导出 fetch', typeof worker.fetch === 'function');
 check('导出 scheduled', typeof worker.scheduled === 'function');
 
 console.log('\n【状态页】');
-const page = await worker.fetch(req('GET'), { BOT_KV: {}, DEFAULT_TZ: 'Asia/Shanghai' }, noopCtx);
+const page = await worker.fetch(req('GET'), { BOT_R2: {}, DEFAULT_TZ: 'Asia/Shanghai' }, noopCtx);
 const html = await page.text();
 check('GET 返回 200', page.status === 200);
 check('Content-Type 是 HTML', (page.headers.get('Content-Type') || '').includes('text/html'));
@@ -64,13 +64,13 @@ check('错误 secret 返回 403', (await worker.fetch(req('POST', '/', { 'X-Tele
 check('正确 secret 返回 200', (await worker.fetch(req('POST', '/', authHeaders, '{}'), env, noopCtx)).status === 200);
 check('非法 JSON 返回 400', (await worker.fetch(req('POST', '/', authHeaders, 'not json'), env, noopCtx)).status === 400);
 check('未配置 secret 时不校验（兼容）',
-  (await worker.fetch(req('POST', '/', {}, '{}'), { BOT_TOKEN: 'x', BOT_KV: {} }, noopCtx)).status === 200);
+  (await worker.fetch(req('POST', '/', {}, '{}'), { BOT_TOKEN: 'x', BOT_R2: {} }, noopCtx)).status === 200);
 
 console.log('\n【一键注册 Webhook /setup】');
 check('缺 WEBHOOK_SECRET 返回 400',
-  (await worker.fetch(req('GET', '/setup?key=abc'), { BOT_TOKEN: 'x', BOT_KV: {} }, noopCtx)).status === 400);
+  (await worker.fetch(req('GET', '/setup?key=abc'), { BOT_TOKEN: 'x', BOT_R2: {} }, noopCtx)).status === 400);
 check('缺 BOT_TOKEN 返回 400',
-  (await worker.fetch(req('GET', `/setup?key=${SECRET}`), { WEBHOOK_SECRET: SECRET, BOT_KV: {} }, noopCtx)).status === 400);
+  (await worker.fetch(req('GET', `/setup?key=${SECRET}`), { WEBHOOK_SECRET: SECRET, BOT_R2: {} }, noopCtx)).status === 400);
 check('key 不正确返回 403',
   (await worker.fetch(req('GET', '/setup?key=wrong'), env, noopCtx)).status === 403);
 check('缺 key 参数返回 403',
@@ -105,7 +105,7 @@ const diag = await diagRes.text();
 check('diagnose 返回 200', diagRes.status === 200);
 check('显示代码版本', diag.includes('代码版本') && diag.includes('多源翻译降级'));
 check('列出全部绑定项',
-  ['BOT_TOKEN', 'WEBHOOK_SECRET', 'BOT_KV', 'AI'].every((n) => diag.includes(n)));
+  ['BOT_TOKEN', 'WEBHOOK_SECRET', 'BOT_R2', 'AI'].every((n) => diag.includes(n)));
 check('未绑定 AI 时给出提示', diag.includes('可能遇到 429'));
 check('实测了翻译源', diag.includes('翻译源实测') && diag.includes('Google'));
 check('显示降级顺序', diag.includes('降级顺序'));
@@ -123,7 +123,7 @@ console.log('\n【响应速度】');
 // fetch 必须立刻返回，不能等业务处理完（否则 Telegram 会重推）
 let resolved = false;
 const slowEnv = {
-  BOT_TOKEN: '123:TEST', WEBHOOK_SECRET: SECRET, BOT_KV: {},
+  BOT_TOKEN: '123:TEST', WEBHOOK_SECRET: SECRET, BOT_R2: {},
 };
 const t0 = Date.now();
 const r = await worker.fetch(req('POST', '/', authHeaders, JSON.stringify({
