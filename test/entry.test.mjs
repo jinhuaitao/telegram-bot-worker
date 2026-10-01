@@ -17,6 +17,12 @@ globalThis.fetch = async (url, opts = {}) => {
   if (method === 'getWebhookInfo') {
     return json({ ok: true, result: { url: 'https://x.workers.dev', pending_update_count: 0, last_error_message: null } });
   }
+  if (u.includes('translate.googleapis.com')) {
+    return json([[['你好世界', 'hello', null, null, 10]], null, 'en']);
+  }
+  if (u.includes('api.mymemory.translated.net')) {
+    return json({ responseStatus: 200, responseData: { translatedText: '你好世界' } });
+  }
   return json({ ok: true, result: { message_id: 1 } });
 };
 
@@ -89,6 +95,29 @@ check('action=info 调用 getWebhookInfo',
 calls.length = 0;
 await worker.fetch(req('GET', `/setup?key=${SECRET}&action=delete`), env, noopCtx);
 check('action=delete 调用 deleteWebhook', calls.some((c) => c.url.endsWith('/deleteWebhook')));
+
+console.log('\n【运行诊断】');
+check('diagnose 需要 key 鉴权',
+  (await worker.fetch(req('GET', '/setup?action=diagnose'), env, noopCtx)).status === 403);
+
+const diagRes = await worker.fetch(req('GET', `/setup?key=${SECRET}&action=diagnose`), env, noopCtx);
+const diag = await diagRes.text();
+check('diagnose 返回 200', diagRes.status === 200);
+check('显示代码版本', diag.includes('代码版本') && diag.includes('多源翻译降级'));
+check('列出全部绑定项',
+  ['BOT_TOKEN', 'WEBHOOK_SECRET', 'BOT_KV', 'AI'].every((n) => diag.includes(n)));
+check('未绑定 AI 时给出提示', diag.includes('可能遇到 429'));
+check('实测了翻译源', diag.includes('翻译源实测') && diag.includes('Google'));
+check('显示降级顺序', diag.includes('降级顺序'));
+check('诊断页不泄露密钥值', !diag.includes('123:TEST'));
+
+const diagWithAI = await (await worker.fetch(
+  req('GET', `/setup?key=${SECRET}&action=diagnose`),
+  { ...env, AI: { run: async () => ({ translated_text: '你好' }) } },
+  noopCtx
+)).text();
+check('绑定 AI 后诊断显示已绑定', diagWithAI.includes('优先走 Workers AI'));
+check('绑定 AI 后降级链以 ai 开头', diagWithAI.includes('<code>ai</code>'));
 
 console.log('\n【响应速度】');
 // fetch 必须立刻返回，不能等业务处理完（否则 Telegram 会重推）

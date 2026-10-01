@@ -195,7 +195,17 @@ https://tg-multibot.你的账号.workers.dev/setup?key=你的WEBHOOK_SECRET
 看到 **「@你的机器人 已就绪」** 就完成了，全程不需要命令行。
 
 > ⚠️ 这个带 key 的地址不要分享给别人 —— 拿到它的人可以解除你的 Webhook。
-> 想随时检查状态：`/setup?key=...&action=info`；想断开连接：`/setup?key=...&action=delete`
+
+`/setup` 还带几个排查用的动作：
+
+| 地址 | 作用 |
+|---|---|
+| `/setup?key=...` | 注册 Webhook（默认动作） |
+| `/setup?key=...&action=info` | 查看 Webhook 当前状态与最近一次错误 |
+| `/setup?key=...&action=diagnose` | **运行诊断** —— 显示代码版本、各项绑定是否就绪、并实测每个翻译源当前能不能用 |
+| `/setup?key=...&action=delete` | 解除 Webhook |
+
+**出问题先跑一次诊断**，它会直接告诉你缺什么、哪个源挂了。
 
 现在去 Telegram 给机器人发一条 `/start`。
 
@@ -548,6 +558,12 @@ npx wrangler tail
 
 **Q：翻译报 429 /「翻译暂时不可用」？**
 
+**先跑一次诊断**，它会告诉你线上跑的是哪一版代码、哪个翻译源当前能用：
+
+```
+https://你的地址.workers.dev/setup?key=你的WEBHOOK_SECRET&action=diagnose
+```
+
 `429` 是限流。Google 的公开翻译端点是从 Cloudflare 的**共享出口 IP** 调用的，高峰期很容易撞上。
 
 项目本身已经做了自动降级（Google 挂了自动换 MyMemory），所以正常情况下你看不到这个报错。只有当**所有源同时不可用**时才会提示 —— 比如 Google 被限流、同时 MyMemory 的每日 5000 字额度也用完了。
@@ -576,10 +592,22 @@ Workers AI 是 Cloudflare 自家的翻译模型，不经过第三方公开端点
 MYMEMORY_EMAIL = "you@example.com"
 ```
 
+**Q：怎么确认线上跑的是最新代码？**
+
+访问诊断页，看「代码版本」那一行：
+
+```
+https://你的地址.workers.dev/setup?key=你的WEBHOOK_SECRET&action=diagnose
+```
+
+如果这个地址打不开、或者跳回了状态页而不是显示诊断信息，说明线上还是旧版本 —— 重新部署一次。
+
+还有一个更简单的判断法：**看机器人回复的措辞**。新版翻译失败时说的是「❌ 翻译暂时不可用」并逐条列出每个源的失败原因；旧版只会甩一句「❌ 翻译失败：翻译服务返回 HTTP 429」。
+
 **Q：怎么调试插件逻辑？**
 
 ```bash
-npm test              # 单元 + 入口 + 端到端集成测试（125 项）
+npm test              # 单元 + 入口 + 端到端集成测试（135 项）
 npx wrangler dev      # 本地起一个 Worker，配合 ngrok 之类做联调
 ```
 
@@ -622,6 +650,6 @@ telegram-bot-worker/
 │       └── translate.js
 └── test/
     ├── unit.test.mjs          # 时区 / 时间解析 / key 排序 单元测试（35 项）
-    ├── entry.test.mjs         # Worker 入口、路由边界、Webhook 安全校验与自注册（29 项）
+    ├── entry.test.mjs         # 入口、路由边界、Webhook 自注册与运行诊断（39 项）
     └── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖（61 项）
 ```

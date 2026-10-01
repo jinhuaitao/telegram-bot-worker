@@ -1,10 +1,14 @@
 /**
  * plugins/translate.js —— 翻译
  *
- * 默认 provider：Google 翻译公开端点（无需 API Key）
- * 可通过环境变量 TRANSLATE_PROVIDER 切换成 mymemory
+ * 多源自动降级：任何一个源限流或失败，自动换下一个，用户无感。
+ * 优先级：Workers AI（若绑定了 AI）→ Google → MyMemory
+ * 可用 TRANSLATE_PROVIDER 把某个源提到最前面。
+ *
+ * 为什么要降级：Google 的公开端点是从 Cloudflare 共享出口 IP 调用的，
+ * 高峰期很容易返回 429。单源方案会直接把错误抛给用户。
  */
-import { esc, fetchWithTimeout, looksChinese, chunkText } from '../utils.js';
+import { esc, fetchWithTimeout, looksChinese } from '../utils.js';
 
 const LANGS = {
   zh: 'zh-CN', 中文: 'zh-CN', 简体: 'zh-CN', 简体中文: 'zh-CN', chinese: 'zh-CN',
@@ -61,6 +65,32 @@ export default {
       run: handleTranslate,
     },
   },
+
+  /**
+   * 自检：实测每个翻译源当前是否可用。
+   * 由 /setup?action=diagnose 调用，用于快速定位「为什么翻译不通」。
+   */
+  async diagnose(env) {
+    const chain = buildChain(env);
+    const results = [];
+
+    for (const name of chain) {
+      const t0 = Date.now();
+      try {
+        const r = await PROVIDERS[name]('hello', 'zh-CN', env);
+        results.push({
+          name,
+          ok: Boolean(r?.text),
+          detail: r?.text ? `返回「${r.text}」` : '返回了空结果',
+          ms: Date.now() - t0,
+        });
+      } catch (err) {
+        results.push({ name, ok: false, detail: err.message, ms: Date.now() - t0 });
+      }
+    }
+
+    return { chain, results };
+  },
 };
 
 async function handleTranslate(ctx) {
@@ -105,66 +135,171 @@ async function handleTranslate(ctx) {
 
   await ctx.bot.sendChatAction(ctx.chatId);
 
-  const provider = (ctx.env.TRANSLATE_PROVIDER || 'google').toLowerCase();
-  try {
-    const result =
-      provider === 'mymemory'
-        ? await translateMyMemory(text, target)
-        : await translateGoogle(text, target);
+  const chain = buildChain(ctx.env);
+  const failures = [];
 
-    if (!result.text) {
-      await ctx.reply('❌ 翻译服务没有返回结果，换个说法再试试。');
+  for (const name of chain) {
+    try {
+      const result = await PROVIDERS[name](text, target, ctx.env);
+      if (!result?.text) {
+        failures.push(`${name}：返回空结果`);
+        continue;
+      }
+
+      const fromLabel = LANG_LABEL[result.source] || result.source || '自动检测';
+      const toLabel = LANG_LABEL[target] || target;
+      const note = failures.length
+        ? ` · 已自动跳过 ${failures.length} 个不可用源`
+        : '';
+
+      await ctx.reply(
+        [
+          `🌐 <b>${esc(fromLabel)} → ${esc(toLabel)}</b>`,
+          '',
+          esc(result.text),
+          '',
+          `<i>${esc(PROVIDER_LABEL[name] || name)}${note}</i>`,
+        ].join('\n')
+      );
       return;
+    } catch (err) {
+      failures.push(`${name}：${err.message}`);
+      console.warn(`[translate] ${name} 失败，换下一个源：${err.message}`);
     }
-
-    const fromLabel = LANG_LABEL[result.source] || result.source || '自动检测';
-    const toLabel = LANG_LABEL[target] || target;
-
-    await ctx.reply(
-      [
-        `🌐 <b>${esc(fromLabel)} → ${esc(toLabel)}</b>`,
-        '',
-        esc(result.text),
-        '',
-        `<i>由 ${esc(provider)} 提供 · 可用 /settings 调整时区等偏好</i>`,
-      ].join('\n')
-    );
-  } catch (err) {
-    await ctx.reply(`❌ 翻译失败：${esc(err.message)}`);
   }
+
+  // 所有源都挂了
+  const limited = failures.some((f) => f.includes('429'));
+  await ctx.reply(
+    [
+      '❌ <b>翻译暂时不可用</b>',
+      '',
+      ...failures.map((f) => `· ${esc(f)}`),
+      '',
+      limited
+        ? '免费翻译源被限流了。稍等几分钟再试，或按 README 启用 Workers AI —— 那是 Cloudflare 自家的模型，不受第三方限流影响。'
+        : '稍后再试，或换一段更短的文本。',
+    ].join('\n')
+  );
+}
+
+/* ─────────────────────── 源的选择与降级 ─────────────────────── */
+
+const PROVIDER_LABEL = {
+  ai: 'Workers AI',
+  google: 'Google 翻译',
+  mymemory: 'MyMemory',
+};
+
+const PROVIDERS = {
+  ai: translateWorkersAI,
+  google: translateGoogle,
+  mymemory: translateMyMemory,
+};
+
+/**
+ * 构造尝试顺序。默认自动把「已绑定的 AI」排在前面，
+ * 其余按可靠性排序；TRANSLATE_PROVIDER 可把指定源提到最前。
+ */
+function buildChain(env) {
+  const available = [];
+  if (env.AI) available.push('ai');
+  available.push('google', 'mymemory');
+
+  const preferred = String(env.TRANSLATE_PROVIDER || 'auto').toLowerCase();
+  if (preferred === 'auto' || !available.includes(preferred)) return available;
+  return [preferred, ...available.filter((p) => p !== preferred)];
+}
+
+/**
+ * 轻量语言检测。
+ * m2m100 和 MyMemory 都不支持自动检测源语言，必须我们自己判断。
+ * 覆盖主流语言，判断不了的按英文处理。
+ */
+function detectLang(text) {
+  const s = String(text);
+  if (/[\u3040-\u30ff]/.test(s)) return 'ja';   // 日文假名（必须在汉字之前判断）
+  if (/[\uac00-\ud7af]/.test(s)) return 'ko';   // 韩文
+  if (/[\u4e00-\u9fff]/.test(s)) return 'zh';   // 中文
+  if (/[\u0400-\u04ff]/.test(s)) return 'ru';   // 西里尔字母
+  if (/[\u0600-\u06ff]/.test(s)) return 'ar';   // 阿拉伯字母
+  if (/[\u0e00-\u0e7f]/.test(s)) return 'th';   // 泰文
+  if (/[\u0900-\u097f]/.test(s)) return 'hi';   // 天城文
+  return 'en';
+}
+
+/** 把内部语言码转成 m2m100 认的代码（它只认两字母） */
+function toM2M100Lang(code) {
+  if (code === 'zh-CN' || code === 'zh-TW') return 'zh';
+  return String(code).split('-')[0];
 }
 
 /* ─────────────────────── Provider 实现 ─────────────────────── */
 
+/** Cloudflare Workers AI —— 自家模型，不受第三方限流影响 */
+async function translateWorkersAI(text, target, env) {
+  if (!env.AI) throw new Error('未绑定 Workers AI');
+
+  const source = detectLang(text);
+  const res = await env.AI.run('@cf/meta/m2m100-1.2b', {
+    text,
+    source_lang: toM2M100Lang(source),
+    target_lang: toM2M100Lang(target),
+  });
+
+  const out = res?.translated_text;
+  if (!out) throw new Error('模型未返回结果');
+  return { text: String(out).trim(), source };
+}
+
+/** Google 公开端点 —— 质量好但容易 429，所以带一次退避重试 */
 async function translateGoogle(text, target, source = 'auto') {
   const url =
     `https://translate.googleapis.com/translate_a/single` +
     `?client=gtx&sl=${encodeURIComponent(source)}&tl=${encodeURIComponent(target)}` +
     `&dt=t&q=${encodeURIComponent(text)}`;
+  const opts = { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tg-multibot/1.0)' } };
 
-  const res = await fetchWithTimeout(
-    url,
-    { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tg-multibot/1.0)' } },
-    12000
-  );
-  if (!res.ok) throw new Error(`翻译服务返回 HTTP ${res.status}`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetchWithTimeout(url, opts, 12000);
 
-  const data = await res.json();
-  const segments = Array.isArray(data?.[0]) ? data[0] : [];
-  const out = segments.map((seg) => (Array.isArray(seg) ? seg[0] || '' : '')).join('');
-  return { text: out.trim(), source: data?.[2] || source };
+    if (res.ok) {
+      const data = await res.json();
+      const segments = Array.isArray(data?.[0]) ? data[0] : [];
+      const out = segments.map((seg) => (Array.isArray(seg) ? seg[0] || '' : '')).join('');
+      return { text: out.trim(), source: data?.[2] || source };
+    }
+
+    // 429 是瞬时限流，短暂等待后重试一次；仍失败则交给降级链
+    if (res.status === 429 && attempt === 0) {
+      await new Promise((r) => setTimeout(r, 600));
+      continue;
+    }
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  throw new Error('HTTP 429 限流');
 }
 
-async function translateMyMemory(text, target) {
+/** MyMemory —— 免费无 Key，但 langpair 必须显式给出源语言 */
+async function translateMyMemory(text, target, env) {
+  const source = detectLang(text);
   const url =
     `https://api.mymemory.translated.net/get` +
-    `?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent('auto|' + target)}`;
+    `?q=${encodeURIComponent(text)}` +
+    `&langpair=${encodeURIComponent(`${source}|${target}`)}` +
+    (env.MYMEMORY_EMAIL ? `&de=${encodeURIComponent(env.MYMEMORY_EMAIL)}` : '');
 
   const res = await fetchWithTimeout(url, {}, 12000);
-  if (!res.ok) throw new Error(`翻译服务返回 HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
   const data = await res.json();
+  const status = Number(data?.responseStatus);
   const out = data?.responseData?.translatedText;
-  if (!out) throw new Error('翻译服务未返回结果');
-  return { text: String(out).trim(), source: 'auto' };
+
+  // MyMemory 出错时把错误说明塞在 translatedText 里，靠 responseStatus 判断
+  if (status && status !== 200) throw new Error(String(out || status).slice(0, 60));
+  if (!out) throw new Error('未返回结果');
+
+  return { text: String(out).trim(), source };
 }

@@ -11,6 +11,12 @@ import { runCron } from './cron.js';
 import { PLUGINS, buildCommandMap, validatePlugins } from './plugins/index.js';
 import { esc } from './utils.js';
 
+/**
+ * 代码版本标记。改功能时顺手更新 ——
+ * /setup?action=diagnose 会把它显示出来，方便确认线上跑的到底是哪一版。
+ */
+const CODE_VERSION = '2026-10-01 · 多源翻译降级';
+
 /** 组装一次性的应用上下文 */
 function createApp(env) {
   return {
@@ -215,6 +221,10 @@ async function handleSetup(url, env) {
       ], Boolean(info.url)));
     }
 
+    if (action === 'diagnose') {
+      return html(await diagnosePage(env));
+    }
+
     const me = await bot.getMe();
     await bot.setWebhook(self, env.WEBHOOK_SECRET, [
       'message', 'edited_message', 'channel_post', 'callback_query',
@@ -250,6 +260,63 @@ function resultPage(title, lines, ok) {
     ${lines.map((l) => `<p style="margin:6px 0">${l}</p>`).join('')}
   </div>
   <p class="sub"><a href="/">← 返回状态页</a></p>
+</body>
+</html>`;
+}
+
+/* ───────────── 运行诊断 ───────────── */
+
+async function diagnosePage(env) {
+  const config = [
+    ['BOT_TOKEN', Boolean(env.BOT_TOKEN), env.BOT_TOKEN
+      ? '已配置'
+      : '缺失 —— 去 Settings → Variables & Secrets 添加，类型选 Secret'],
+    ['WEBHOOK_SECRET', Boolean(env.WEBHOOK_SECRET), env.WEBHOOK_SECRET
+      ? '已配置'
+      : '缺失 —— 没有它，任何人都能伪造消息打你的机器人'],
+    ['BOT_KV', Boolean(env.BOT_KV), env.BOT_KV
+      ? '已绑定'
+      : '缺失 —— 订阅、提醒、监控都无法保存'],
+    ['AI', Boolean(env.AI), env.AI
+      ? '已绑定，翻译会优先走 Workers AI'
+      : '未绑定 —— 翻译走 Google / MyMemory，可能遇到 429'],
+  ];
+
+  const translate = PLUGINS.find((p) => p.name === 'translate');
+  let providerBlock = '';
+
+  if (typeof translate?.diagnose === 'function') {
+    try {
+      const { chain, results } = await translate.diagnose(env);
+      providerBlock = `
+  <h2 style="font-size:15px;margin:26px 0 4px">翻译源实测</h2>
+  <p class="sub" style="margin-bottom:8px">降级顺序：${chain.map((c) => `<code>${esc(c)}</code>`).join(' → ')}</p>
+  <ul>
+    ${results.map((r) => `<li>${r.ok ? '✅' : '❌'} <b>${esc(r.name)}</b> — ${esc(r.detail)} <span>${r.ms}ms</span></li>`).join('')}
+  </ul>`;
+    } catch (err) {
+      providerBlock = `<div class="warn">翻译源自检失败：${esc(String(err.message || err))}</div>`;
+    }
+  }
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>运行诊断</title>
+<style>${PAGE_CSS}</style>
+</head>
+<body>
+  <h1>🔍 运行诊断</h1>
+  <p class="sub">代码版本：<code>${esc(CODE_VERSION)}</code></p>
+
+  <h2 style="font-size:15px;margin:26px 0 4px">绑定与配置</h2>
+  <ul>
+    ${config.map(([name, ok, note]) => `<li>${ok ? '✅' : '⚠️'} <b>${esc(name)}</b> — ${esc(note)}</li>`).join('')}
+  </ul>
+  ${providerBlock}
+  <p class="sub" style="margin-top:26px"><a href="/">← 返回状态页</a></p>
 </body>
 </html>`;
 }

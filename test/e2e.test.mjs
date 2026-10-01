@@ -44,6 +44,10 @@ class MockKV {
 const outbox = [];   // 记录机器人发出的所有消息
 const external = []; // 记录对外部服务的请求
 
+/* 可控的翻译源状态，用于测试降级链 */
+const translateMock = { google: 'ok', mymemory: 'ok' };
+const aiCalls = [];
+
 const json = (obj) => new Response(JSON.stringify(obj), {
   status: 200, headers: { 'Content-Type': 'application/json' },
 });
@@ -91,7 +95,19 @@ globalThis.fetch = async (url, opts = {}) => {
   }
 
   if (u.includes('translate.googleapis.com')) {
+    if (translateMock.google === '429') return new Response('rate limited', { status: 429 });
+    if (translateMock.google === '500') return new Response('boom', { status: 500 });
     return json([[['你好世界', 'hello world', null, null, 10]], null, 'en']);
+  }
+
+  if (u.includes('api.mymemory.translated.net')) {
+    if (translateMock.mymemory === 'fail') {
+      return json({
+        responseStatus: 403,
+        responseData: { translatedText: 'MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY' },
+      });
+    }
+    return json({ responseStatus: 200, responseData: { translatedText: '你好世界（来自 MyMemory）' } });
   }
 
   if (u.includes('example.com')) return new Response('Welcome to Example', { status: 200 });
@@ -105,7 +121,7 @@ const env = {
   BOT_TOKEN: '123:TEST',
   BOT_KV: new MockKV(),
   DEFAULT_TZ: 'Asia/Shanghai',
-  TRANSLATE_PROVIDER: 'google',
+  TRANSLATE_PROVIDER: 'auto',
   MAX_MONITOR_PER_TICK: '20',
 };
 const app = {
@@ -212,12 +228,67 @@ check('删除提醒成功', has(r, '已取消'));
 console.log('\n【翻译插件】');
 r = await send('/tr hello world');
 check('翻译成功', has(r, '你好世界') && has(r, 'English → 中文'), r.slice(0, 120));
+check('标注了实际使用的源', has(r, 'Google 翻译'), r.slice(0, 150));
 
 r = await send('/tr ja 早上好');
-check('指定目标语言', has(r, '日本語') || has(r, 'ja'), r.slice(0, 120));
+check('指定目标语言', has(r, '日本語'), r.slice(0, 120));
 
 r = await send('/tr');
 check('缺参数时给出用法', has(r, '用法'));
+
+console.log('\n【翻译降级链】');
+// Google 限流 → 自动换 MyMemory
+translateMock.google = '429';
+r = await send('/tr hello world');
+check('Google 429 时降级到 MyMemory', has(r, 'MyMemory') && has(r, '你好世界'), r.slice(0, 180));
+check('提示已自动跳过不可用源', has(r, '跳过'), r.slice(0, 180));
+
+// 全部源失败 → 友好提示 + 解决建议
+translateMock.mymemory = 'fail';
+r = await send('/tr hello world');
+check('所有源都失败时给出友好提示', has(r, '翻译暂时不可用'), r.slice(0, 200));
+check('提示里带上失败原因', has(r, '429'), r.slice(0, 200));
+check('提示里给出解决方案', has(r, 'Workers AI'), r.slice(0, 250));
+check('不把原始异常直接抛给用户', !has(r, 'undefined') && !has(r, 'TypeError'), r.slice(0, 200));
+
+translateMock.google = 'ok';
+translateMock.mymemory = 'ok';
+
+// TRANSLATE_PROVIDER 可指定优先源
+env.TRANSLATE_PROVIDER = 'mymemory';
+r = await send('/tr hello world');
+check('可指定 MyMemory 优先', has(r, 'MyMemory'), r.slice(0, 150));
+env.TRANSLATE_PROVIDER = 'auto';
+
+console.log('\n【Workers AI 翻译】');
+env.AI = {
+  run: async (model, params) => {
+    aiCalls.push({ model, params });
+    return { translated_text: '你好世界（来自 Workers AI）' };
+  },
+};
+
+r = await send('/tr hello world');
+check('绑定 AI 后优先走 Workers AI', has(r, 'Workers AI') && has(r, '来自 Workers AI'), r.slice(0, 180));
+check('调用的是 m2m100 模型', aiCalls.some((c) => c.model === '@cf/meta/m2m100-1.2b'), JSON.stringify(aiCalls));
+check('目标语言参数正确', aiCalls.some((c) => c.params.target_lang === 'zh'), JSON.stringify(aiCalls));
+check('源语言参数正确', aiCalls.some((c) => c.params.source_lang === 'en'), JSON.stringify(aiCalls));
+
+aiCalls.length = 0;
+await send('/tr 你好世界');
+check('中译英时源语言识别为 zh', aiCalls.some((c) => c.params.source_lang === 'zh'), JSON.stringify(aiCalls));
+check('中译英时目标语言为 en', aiCalls.some((c) => c.params.target_lang === 'en'), JSON.stringify(aiCalls));
+
+aiCalls.length = 0;
+await send('/tr en おはよう');
+check('日文假名被识别为 ja', aiCalls.some((c) => c.params.source_lang === 'ja'), JSON.stringify(aiCalls));
+check('可指定译成英文', aiCalls.some((c) => c.params.target_lang === 'en'), JSON.stringify(aiCalls));
+
+// AI 也挂了 → 继续降级到 Google
+env.AI = { run: async () => { throw new Error('AI 服务繁忙'); } };
+r = await send('/tr hello world');
+check('AI 失败时继续降级到 Google', has(r, 'Google 翻译') && has(r, '你好世界'), r.slice(0, 180));
+delete env.AI;
 
 console.log('\n【设置插件】');
 r = await send('/tz Asia/Tokyo');
