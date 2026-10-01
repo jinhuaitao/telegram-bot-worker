@@ -1,0 +1,17 @@
+{
+  "name": "tg-multibot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "插件式 Telegram 多功能机器人 —— 天气订阅 / 监控告警 / 定时提醒 / 翻译，运行在 Cloudflare Workers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "setup": "node scripts/setup.mjs",
+    "test": "node test/unit.test.mjs && node test/entry.test.mjs && node test/e2e.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
