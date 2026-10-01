@@ -14,19 +14,22 @@ keep_vars = true
 [triggers]
 crons = ["* * * * *"]
 
-# ── KV 存储（存订阅 / 监控项 / 提醒 / 用户设置）─────────────
+# ── R2 存储（存订阅 / 监控项 / 提醒 / 用户设置）─────────────
 #
-# 这里故意不写 id —— 用的是 Wrangler 的「自动预置」特性：
-# 部署时会自动创建一个名为 <worker名>-BOT_KV 的 KV 命名空间。
-# 所以无论走「面板连 GitHub」还是「本地 CLI」，都不需要先手动创建资源。
+# 这里故意不写 bucket_id —— 用的是 Wrangler 的「自动预置」特性：
+# 部署时会自动创建一个名为 <worker名>-BOT_R2 的 R2 bucket。
 #
-# 想复用已有的 KV，就取消下面这行注释并填上自己的命名空间 ID
-# （面板路径：Workers & Pages → KV → 选中命名空间 → 复制 ID）：
+# ⚠️ 前提：R2 需要在账号上开通一次订阅（Cloudflare 面板 → R2 → 走一次
+# checkout 流程并添加支付方式）。额度内是 $0，但没开通前 bucket 创建不出来，
+# 部署会在预置这一步失败。这一步只需做一次，跨所有 Worker 共享。
+# 这是 R2 相对 KV / D1 唯一多出来的前置动作。
 #
-#   id = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+# 想复用已有的 bucket，就取消下面这行注释并填上你自己的 bucket 名：
 #
-[[kv_namespaces]]
-binding = "BOT_KV"
+#   bucket_name = "my-existing-bucket"
+#
+[[r2_buckets]]
+binding = "BOT_R2"
 
 # ── Workers AI（翻译用）──────────────────────────────────────
 #

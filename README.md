@@ -3,7 +3,7 @@
 一个机器人干所有事：**天气订阅 · 监控告警 · 定时提醒 · 翻译**。  
 全部跑在 Cloudflare Workers 免费额度内，**不需要服务器、不需要数据库、不需要任何第三方 API Key**。
 
-部署支持两条路：**Cloudflare 面板连 GitHub**（全程网页操作）或**本地命令行 wrangler**。两种都不用手动创建 KV。
+部署支持两条路：**Cloudflare 面板连 GitHub**（全程网页操作）或**本地命令行 wrangler**。两种方式都不用手动手建 bucket，但 R2 需要先给账号开通一次订阅（见下方「前置：开通 R2」）。
 
 ---
 
@@ -101,7 +101,7 @@
                        │    │    │    │    │
                     weather mon remind  tr  help/settings
                        │    │    │    │
-                       └────┴────┴────┴──▶ KV (BOT_KV)
+                       └────┴────┴────┴──▶ R2 (BOT_R2)
                                             cfg: / wx: / mon: / rm:
 ```
 
@@ -112,7 +112,7 @@
 | 插件注册表扁平化                     | 加功能只改 `plugins/index.js` 一行，核心代码零改动                          |
 | `fetch` 先返回 200 再处理          | Telegram 只等 1 秒左右，超时会重推导致重复回复                                |
 | `ctx.waitUntil()`            | 让 Worker 在响应后继续跑完异步逻辑                                        |
-| 提醒 key 用 `rm:{14位补零时间戳}:...` | KV 的 `list` 按字典序返回，补零后**字典序 == 时间序**，cron 扫到第一个未到期就能停，不用全表扫描 |
+| 提醒 key 用 `rm:{14位补零时间戳}:...` | R2 的 `list` 按字典序返回，补零后**字典序 == 时间序**，cron 扫到第一个未到期就能停，不用全表扫描 |
 | 监控连续失败达阈值才告警                 | 网络抖动一次就报警会把人吵死；恢复时补一条恢复通知                                    |
 | 每个插件独立 try/catch             | 一个插件抛错不影响其他插件和整体调度                                           |
 | `wrangler.toml` 只写绑定名不写 ID   | 用 Wrangler 的自动预置，面板连 GitHub 和 CLI 两条路都不用手动建资源                |
@@ -130,7 +130,10 @@
 | 更新方式  | `git push` 自动部署  | 手动 `wrangler deploy` |
 | 适合    | 只想用，不想折腾环境       | 要本地调试、不想放 GitHub     |
 
-两种方式都**不需要手动创建 KV 命名空间** —— `wrangler.toml` 里只声明了绑定名没写 ID，部署时 Cloudflare 会自动创建（名字形如 `tg-multibot-BOT_KV`）。
+两种方式都**不需要手动创建 bucket** —— `wrangler.toml` 里只声明了绑定名没写 ID，部署时 Cloudflare 会自动创建（名字形如 `tg-multibot-BOT_R2`）。
+
+> ⚠️ **前置：开通 R2 订阅（一次性）**  
+> 与 KV / D1 不同，R2 即使只用免费额度，也需要先在账号上开通一次订阅：Cloudflare 面板 → **Storage & databases → R2 → 走一次 checkout 并添加支付方式**。额度内是 `$0`，但不开通的话 bucket 建不出来、部署会在自动预置这一步失败。这一步只需做一次，之后跨所有 Worker 共享。
 
 ---
 
@@ -169,7 +172,7 @@ git push -u origin main
    | **Root directory** | 项目在仓库根目录就留空；在子目录里就填 `telegram-bot-worker` |
 5. 点 **Deploy**，等一两分钟
 
-首次部署会自动把 KV 命名空间一起建好。部署完成后 Worker 地址形如：
+首次部署会自动把 R2 bucket 一起建好（前提是已开通 R2 订阅）。部署完成后 Worker 地址形如：
 
 ```
 https://tg-multibot.你的账号.workers.dev
@@ -221,7 +224,7 @@ npx wrangler login
 npx wrangler secret put BOT_TOKEN
 npx wrangler secret put WEBHOOK_SECRET
 
-# 部署 —— KV 会自动创建
+# 部署 —— R2 bucket 会自动创建（需已开通 R2 订阅）
 npx wrangler deploy
 ```
 
@@ -468,7 +471,7 @@ export default {
 | `ctx.isPrivate`                        | 是否私聊                                                                           |
 | `ctx.reply(html, extra)`               | 回复当前消息（HTML 模式，超长自动分片）                                                         |
 | `ctx.send(html)`                       | 发送但不引用原消息                                                                      |
-| `ctx.store`                            | KV 封装：`getJSON` / `setJSON` / `del` / `listJSON` / `listNames` / `clearPrefix` |
+| `ctx.store`                            | R2 封装：`getJSON` / `setJSON` / `del` / `listJSON` / `listNames` / `clearPrefix` |
 | `ctx.bot`                              | Telegram API：`sendMessage` / `editMessageText` / `sendChatAction` 等            |
 | `ctx.env`                              | 环境变量与绑定                                                                        |
 | `ctx.loadSettings()`                   | 取用户设置（含 `tz`、`muted`，已带默认值和时区校验）                                               |
@@ -479,15 +482,18 @@ export default {
 
 ## 免费额度与限制
 
-跑在 Cloudflare Workers 免费版上，这些额度足够个人/小团队长期使用：
+跑在 Cloudflare Workers 免费版上，这些额度足够个人/小团队长期使用。R2 的额度按**每月**计（不是每天），比原来的 KV 宽裕得多：
 
-| 项目             | 免费额度      | 本项目的用量                            |
-| -------------- | --------- | --------------------------------- |
-| Worker 请求      | 10 万次/天   | Cron 每分钟 1 次 ≈ **1440 次/天**，加上消息量 |
-| KV 读取          | 10 万次/天   | 每次 cron 约几次读                      |
-| KV 写入          | 1000 次/天  | 提醒/监控状态更新                         |
-| CPU 时间         | 10 ms/请求  | 见下方说明                             |
-| 构建分钟数（仅面板部署路径） | 3000 分钟/月 | 每次 push 约 1 分钟                    |
+| 项目             | 免费额度                | 本项目的用量                            |
+| -------------- | ------------------- | --------------------------------- |
+| Worker 请求      | 10 万次/天             | Cron 每分钟 1 次 ≈ **1440 次/天**，加上消息量 |
+| R2 写 / list（Class A） | 100 万次/月     | 监控/提醒状态更新 + 每轮 cron 扫 key，约几万/月   |
+| R2 读（Class B）  | 1000 万次/月           | 每条消息读设置、cron 逐个取值，个人用量远低于此      |
+| R2 存储          | 10 GB·月             | 订阅/提醒/监控的 JSON，通常只有几十 KB         |
+| CPU 时间         | 10 ms/请求            | 见下方说明                             |
+| 构建分钟数（仅面板部署路径） | 3000 分钟/月           | 每次 push 约 1 分钟                    |
+
+> 换到 R2 主要是为了解决 KV 免费档「写入仅 1000 次/天」偏紧的问题：本项目 cron 每分钟都要回写监控/天气状态，监控项一多很容易触顶，R2 的 100 万次/月写额度基本用不完。代价是 R2 需要账号先开通一次订阅（见部署章节），且读延迟比 KV 略高（对象读通常不回边缘缓存）。
 
 
 **几个需要注意的点：**
@@ -498,8 +504,8 @@ export default {
 2. **单次请求最多 50 个子请求（subrequest）。**  
    所以 `wrangler.toml` 里有 `MAX_MONITOR_PER_TICK = 20`，限制每轮最多检查 20 个监控项。  
    监控项很多时，可以调大这个值，但建议不超过 40。
-3. **KV 是最终一致的，写入后可能几百毫秒才可见。**  
-   对本项目无影响（状态更新是异步的），但不要在同一个 tick 里「写进去立刻读出来」并期望一定读到。
+3. **R2 是强一致的，写入/删除成功后全球立即可见。**  
+   原来 KV 的「最终一致、写后几百毫秒才可见」问题在 R2 上不存在；但对象读要先回源到 bucket，延迟比 KV 的边缘缓存略高，所以每条消息仍只读一次设置（`loadSettings` 内部有 Promise 缓存）。
 4. **提醒精度是分钟级**，依赖 Cron 每分钟触发。  
    Cloudflare 的 Cron 偶尔会有几秒到几十秒的延迟，属正常现象。
 5. **`/weather` 和 `/tr` 依赖第三方免费接口**（Open-Meteo、Google 翻译）。  
@@ -530,13 +536,15 @@ npx wrangler tail
 
 日志里出现 `403 Forbidden`，说明 `WEBHOOK_SECRET` 和注册 Webhook 时用的值不一致，重新访问一次 `/setup?key=...` 即可。
 
-**Q：KV 要手动创建吗？数据存在哪？**
+**Q：R2 要手动创建吗？数据存在哪？**
 
-不用。`wrangler.toml` 里只写了 `binding = "BOT_KV"` 而没写 `id`，用的是 Wrangler 的**自动预置**：部署时自动创建命名空间，名字形如 `tg-multibot-BOT_KV`。
+bucket 不用手动建 —— `wrangler.toml` 里只写了 `binding = "BOT_R2"` 而没写 `bucket_id`，用的是 Wrangler 的**自动预置**：部署时自动创建，名字形如 `tg-multibot-BOT_R2`。
 
-所有订阅、监控项、提醒都存在这个 KV 里。想看或清空，去 **Workers & Pages → KV**。
+但**开通 R2 本身需要先在账号上做一次性操作**：Cloudflare 面板 → R2 → 走 checkout 加一个支付方式（免费额度内为 `$0`）。这一步不做的话，自动预置建 bucket 会失败。
 
-> 注意：如果你之前手动创建过 KV 并把 ID 填进了 `wrangler.toml`，再改成自动预置会**新建一个空 KV**，老数据还留在旧命名空间里。想继续用旧的，把它的 ID 填回 `wrangler.toml` 里那行注释处即可。
+所有订阅、监控项、提醒都存在这个 bucket 里，key 前缀分别是 `cfg:` / `wx:` / `mon:` / `rm:`。想看或清空，去 **Storage & databases → R2 → 选中 bucket**。
+
+> 注意：如果你之前用的是 KV，换成 R2 后数据是**重新从空开始**的 —— 两者是不同产品，不会自动迁移。老 KV 里的订阅需要在 Telegram 里重新订一遍，或自行用 `wrangler` 导出后写入 R2。
 
 **Q：改了代码怎么生效？**
 
@@ -548,7 +556,7 @@ npx wrangler tail
 **Q：怎么调试插件逻辑？**
 
 ```bash
-npm test              # 单元 + 入口 + 端到端集成测试（108 项）
+npm test              # 单元 + 入口 + 端到端集成测试（149 项）
 npx wrangler dev      # 本地起一个 Worker，配合 ngrok 之类做联调
 ```
 
@@ -569,7 +577,7 @@ Cloudflare 的 Git 集成还支持 GitLab（以及 Cursor Origin）。Bitbucket 
 
 ```
 telegram-bot-worker/
-├── wrangler.toml              # Worker 配置：Cron、KV 绑定（自动预置）、环境变量
+├── wrangler.toml              # Worker 配置：Cron、R2 绑定（自动预置）、环境变量
 ├── package.json
 ├── .dev.vars.example          # 本地开发环境变量模板
 ├── scripts/
@@ -579,7 +587,7 @@ telegram-bot-worker/
 │   ├── router.js              # 解析 update → 构造 ctx → 分发到插件
 │   ├── cron.js                # 定时调度：把 cronCtx 广播给各插件
 │   ├── telegram.js            # Telegram API 封装（429 重试、自动分片）
-│   ├── store.js               # KV 封装 + key 命名空间约定
+│   ├── store.js               # R2 封装 + key 命名空间约定
 │   ├── utils.js               # 时区换算、自然语言时间解析、转义
 │   └── plugins/
 │       ├── index.js           # ★ 插件注册表（加插件只改这里）
@@ -591,6 +599,6 @@ telegram-bot-worker/
 │       └── translate.js
 └── test/
     ├── unit.test.mjs          # 时区 / 时间解析 / key 排序 单元测试（35 项）
-    ├── entry.test.mjs         # Worker 入口、路由边界、Webhook 安全校验与自注册（29 项）
-    └── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖（44 项）
+    ├── entry.test.mjs         # Worker 入口、路由边界、Webhook 安全校验与自注册（39 项）
+    └── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖（75 项）
 ```
