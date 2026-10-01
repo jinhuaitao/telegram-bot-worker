@@ -78,18 +78,44 @@ globalThis.fetch = async (url, opts = {}) => {
     });
   }
 
+  // ⚠️ 必须排在 api.open-meteo.com 之前：air-quality-api.open-meteo.com 也含该子串
+  if (u.includes('air-quality-api.open-meteo.com')) {
+    return json({
+      current: { time: '2026-10-01T10:00', us_aqi: 62, pm10: 41.2, pm2_5: 23.7 },
+    });
+  }
+
   if (u.includes('api.open-meteo.com')) {
     return json({
-      current: { temperature_2m: 18.5, relative_humidity_2m: 45, apparent_temperature: 17.2, weather_code: 1, wind_speed_10m: 3.4 },
+      current: {
+        time: '2026-10-01T10:00',
+        temperature_2m: 18.5, relative_humidity_2m: 45, apparent_temperature: 17.2,
+        dew_point_2m: 6.1, weather_code: 1, wind_speed_10m: 3.4,
+        wind_direction_10m: 135, wind_gusts_10m: 6.8, pressure_msl: 1013.2,
+        cloud_cover: 40, visibility: 24140, precipitation: 0,
+      },
+      hourly: {
+        time: [
+          '2026-10-01T10:00', '2026-10-01T11:00', '2026-10-01T12:00',
+          '2026-10-01T13:00', '2026-10-01T14:00', '2026-10-01T15:00',
+        ],
+        temperature_2m: [18.5, 19.4, 20.8, 21.6, 22.1, 22.0],
+        weather_code: [1, 1, 2, 2, 3, 3],
+        precipitation_probability: [5, 5, 10, 10, 15, 20],
+      },
       daily: {
         time: ['2026-10-01', '2026-10-02', '2026-10-03'],
         weather_code: [1, 3, 61],
         temperature_2m_max: [24, 22, 19],
         temperature_2m_min: [12, 11, 10],
         precipitation_probability_max: [10, 20, 80],
+        precipitation_sum: [0, 0.4, 6.2],
         wind_speed_10m_max: [5, 4, 7],
+        wind_direction_10m_dominant: [140, 200, 90],
+        uv_index_max: [6.4, 5.1, 2.2],
         sunrise: ['2026-10-01T06:12', '2026-10-02T06:13', '2026-10-03T06:14'],
         sunset: ['2026-10-01T17:48', '2026-10-02T17:47', '2026-10-03T17:46'],
+        daylight_duration: [41760, 41640, 41520],
       },
     });
   }
@@ -175,9 +201,16 @@ check('私聊非命令有引导', has(r, '/help'));
 
 console.log('\n【天气插件】');
 r = await send('/weather 北京');
-check('查询天气成功', has(r, '北京') && has(r, '当前') && has(r, '18.5°C'), r.slice(0, 120));
+check('查询天气成功', has(r, '北京') && has(r, '实况') && has(r, '18.5°C'), r.slice(0, 120));
+check('实况含体感/湿度/露点', has(r, '体感') && has(r, '湿度') && has(r, '露点'));
+check('实况含风向风速阵风', has(r, '风') && has(r, '阵风') && has(r, 'm/s'));
+check('实况含气压能见度云量', has(r, '气压') && has(r, '能见度') && has(r, '云量'));
 check('预报含三天', has(r, '今天') && has(r, '明天') && has(r, '后天'));
-check('含日出日落', has(r, '日出'));
+check('逐日含 UV / 降水', has(r, 'UV') && has(r, '降水'));
+check('含空气质量段', has(r, '空气质量') && has(r, 'AQI') && has(r, 'PM2.5'), r.slice(0, 160));
+check('含日出日落与昼长', has(r, '日出') && has(r, '日落') && has(r, '昼长'));
+check('含逐小时预报', has(r, '未来 6 小时'));
+check('调用过空气质量接口', external.some((u) => u.includes('air-quality-api')));
 
 r = await send('/weather sub 北京 07:30');
 check('订阅成功', has(r, '订阅成功') && has(r, '07:30'));
@@ -326,6 +359,23 @@ await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
 check('未到期提醒不被派发', !outbox.some((m) => has(m.text, '还没到')));
 remaining = (await env.BOT_KV.list({ prefix: 'rm:' })).keys.map((k) => k.name);
 check('未到期提醒仍保留', remaining.some((n) => n.endsWith(':yyyyy')), JSON.stringify(remaining));
+
+// 天气定时推送：塞一条「已到点」的订阅（pushAt=00:00 必然已过）
+await env.BOT_KV.put(`wx:${CHAT}:${encodeURIComponent('北京')}`, JSON.stringify({
+  chatId: CHAT, city: '北京', label: '北京 · 北京市',
+  latitude: 39.9, longitude: 116.4, timezone: 'Asia/Shanghai',
+  pushAt: '00:00', lastPushDate: null, createdAt: Date.now() - 60000,
+}));
+outbox.length = 0;
+await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
+const wxPush = outbox.find((m) => has(m.text, '早安'));
+check('天气订阅按点推送', Boolean(wxPush), JSON.stringify(outbox.map((m) => m.text.slice(0, 40))));
+check('推送含实况与空气质量', Boolean(wxPush) && has(wxPush.text, '实况') && has(wxPush.text, '空气质量'));
+check('推送保持精简（不带逐小时）', Boolean(wxPush) && !has(wxPush.text, '未来 6 小时'));
+
+outbox.length = 0;
+await runCron({ cron: '* * * * *', scheduledTime: Date.now() }, app);
+check('天气推送当日不重复', !outbox.some((m) => has(m.text, '早安')));
 
 // 监控告警：把监控项的 lastCheck 拨到过去使其到期，再跑一轮
 for (const k of (await env.BOT_KV.list({ prefix: 'mon:' })).keys) {

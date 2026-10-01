@@ -8,6 +8,7 @@ import { esc, fetchWithTimeout, localDateStr, localTimeStr, formatInTz } from '.
 
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const FC_URL = 'https://api.open-meteo.com/v1/forecast';
+const AQ_URL = 'https://air-quality-api.open-meteo.com/v1/air-quality';
 
 /** WMO 天气码 → [emoji, 中文描述] */
 const WMO = {
@@ -56,8 +57,8 @@ export default {
       usage: '/weather 北京  |  /weather sub 北京 07:30  |  /weather list  |  /weather off [城市]',
       detail: [
         '示例：',
-        '  <code>/weather 上海</code> — 立即查看上海天气（含未来 3 天）',
-        '  <code>/weather sub 北京 07:30</code> — 每天 07:30 推送北京天气',
+        '  <code>/weather 上海</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',
+        '  <code>/weather sub 北京 07:30</code> — 每天 07:30 推送北京天气（精简版）',
         '  <code>/weather list</code> — 查看已订阅的城市',
         '  <code>/weather off</code> — 取消全部天气订阅',
         '  <code>/weather off 北京</code> — 只取消北京',
@@ -95,8 +96,11 @@ async function queryCity(ctx, city) {
   await ctx.bot.sendChatAction(ctx.chatId);
   try {
     const place = await geocode(city);
-    const data = await fetchWeather(place.latitude, place.longitude, place.timezone, 3);
-    await ctx.reply(renderWeather(place, data));
+    const [data, air] = await Promise.all([
+      fetchWeather(place.latitude, place.longitude, place.timezone, 3),
+      fetchAirQuality(place.latitude, place.longitude, place.timezone).catch(() => null),
+    ]);
+    await ctx.reply(renderWeather(place, data, { air }));
   } catch (err) {
     await ctx.reply(`❌ ${esc(err.message)}`);
   }
@@ -235,9 +239,13 @@ async function cronWeather({ store, bot, now }) {
         continue;
       }
 
-      const data = await fetchWeather(item.latitude, item.longitude, tz, 1);
+      const [data, air] = await Promise.all([
+        fetchWeather(item.latitude, item.longitude, tz, 1),
+        fetchAirQuality(item.latitude, item.longitude, tz).catch(() => null),
+      ]);
       const place = { name: item.city, label: item.label, latitude: item.latitude, longitude: item.longitude, timezone: tz };
-      await bot.sendMessage(item.chatId, `🌅 <b>早安</b>\n\n${renderWeather(place, data, { days: 1 })}`);
+      // 每日推送保持精简：只给实况 + 今日概况 + 空气质量，不带逐小时
+      await bot.sendMessage(item.chatId, `🌅 <b>早安</b>\n\n${renderWeather(place, data, { days: 1, hours: 0, air })}`);
 
       item.lastPushDate = today;
       await store.setJSON(item.__key, stripInternal(item));
@@ -275,9 +283,18 @@ async function fetchWeather(lat, lon, tz, days = 3) {
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lon),
-    current: 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m',
-    daily:
-      'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset',
+    current: [
+      'temperature_2m', 'relative_humidity_2m', 'apparent_temperature', 'dew_point_2m',
+      'weather_code', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m',
+      'pressure_msl', 'cloud_cover', 'visibility', 'precipitation',
+    ].join(','),
+    hourly: 'temperature_2m,weather_code,precipitation_probability',
+    daily: [
+      'weather_code', 'temperature_2m_max', 'temperature_2m_min',
+      'precipitation_probability_max', 'precipitation_sum',
+      'wind_speed_10m_max', 'wind_direction_10m_dominant',
+      'uv_index_max', 'sunrise', 'sunset', 'daylight_duration',
+    ].join(','),
     timezone: tz && tz !== 'auto' ? tz : 'auto',
     forecast_days: String(days),
   });
@@ -286,49 +303,180 @@ async function fetchWeather(lat, lon, tz, days = 3) {
   return res.json();
 }
 
+/** 空气质量（同样是 Open-Meteo，免费无 Key）。失败不影响主流程。 */
+async function fetchAirQuality(lat, lon, tz) {
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lon),
+    current: 'us_aqi,pm10,pm2_5',
+    timezone: tz && tz !== 'auto' ? tz : 'auto',
+  });
+  const res = await fetchWithTimeout(`${AQ_URL}?${params}`, {}, 10000);
+  if (!res.ok) throw new Error(`空气质量服务异常（HTTP ${res.status}）`);
+  return res.json();
+}
+
 /* ─────────────────────── 渲染 ─────────────────────── */
+
+const WIND_DIRS = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+
+function windDir(deg) {
+  if (deg === undefined || deg === null || !Number.isFinite(Number(deg))) return '';
+  return WIND_DIRS[Math.round(Number(deg) / 45) % 8];
+}
+
+function uvLevel(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '';
+  if (n < 3) return '低';
+  if (n < 6) return '中等';
+  if (n < 8) return '高';
+  if (n < 11) return '很高';
+  return '极高';
+}
+
+function aqiLevel(aqi) {
+  const n = Number(aqi);
+  if (!Number.isFinite(n)) return { label: '暂无数据', dot: '⚪' };
+  if (n <= 50) return { label: '优', dot: '🟢' };
+  if (n <= 100) return { label: '良', dot: '🟡' };
+  if (n <= 150) return { label: '轻度污染', dot: '🟠' };
+  if (n <= 200) return { label: '中度污染', dot: '🔴' };
+  if (n <= 300) return { label: '重度污染', dot: '🟣' };
+  return { label: '严重污染', dot: '🟤' };
+}
+
+function fmtDaylight(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s)) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return `${h} 小时 ${m} 分`;
+}
+
+/** 在逐小时数组里找到「当前时刻」对应的下标 */
+function findHourIndex(times, currentTime) {
+  if (!times.length) return -1;
+  if (!currentTime) return 0;
+  const key = String(currentTime).slice(0, 13);
+  const idx = times.findIndex((t) => String(t).slice(0, 13) >= key);
+  return idx >= 0 ? idx : 0;
+}
 
 function placeLabel(place) {
   const parts = [place.name, place.admin1].filter((x, i, a) => x && a.indexOf(x) === i);
   return parts.join(' · ');
 }
 
-function renderWeather(place, data, { days = 3 } = {}) {
+function renderWeather(place, data, { days = 3, air = null, hours = 6 } = {}) {
   const cur = data.current || {};
   const daily = data.daily || {};
+  const hourly = data.hourly || {};
   const [icon, desc] = describe(cur.weather_code);
 
-  const lines = [`${icon} <b>${esc(place.label || place.name)}</b>`];
+  const lines = [`${icon} <b>${esc(place.label || place.name)}</b>`, '━━━━━━━━━━━━━━'];
 
+  /* ── 实况 ── */
   if (cur.temperature_2m !== undefined) {
     lines.push(
       '',
-      `当前 <b>${round(cur.temperature_2m)}°C</b> · ${esc(desc)}`,
-      `体感 ${round(cur.apparent_temperature)}°C · 湿度 ${cur.relative_humidity_2m}% · 风速 ${round(cur.wind_speed_10m)} m/s`
+      '<b>实况</b>',
+      `🌡 <b>${round(cur.temperature_2m)}°C</b>　体感 ${round(cur.apparent_temperature)}°C　${esc(desc)}`,
+      `💧 湿度 ${cur.relative_humidity_2m}%　露点 ${round(cur.dew_point_2m)}°C`
     );
+
+    const dir = windDir(cur.wind_direction_10m);
+    lines.push(
+      `💨 ${dir ? dir + '风 ' : ''}${round(cur.wind_speed_10m)} m/s` +
+        (cur.wind_gusts_10m !== undefined && cur.wind_gusts_10m !== null
+          ? `　阵风 ${round(cur.wind_gusts_10m)} m/s`
+          : '')
+    );
+
+    const row1 = [];
+    if (cur.pressure_msl !== undefined && cur.pressure_msl !== null) {
+      row1.push(`气压 ${Math.round(cur.pressure_msl)} hPa`);
+    }
+    if (cur.visibility !== undefined && cur.visibility !== null) {
+      row1.push(`能见度 ${round(cur.visibility / 1000)} km`);
+    }
+    if (row1.length) lines.push(`🧭 ${row1.join('　')}`);
+
+    const row2 = [];
+    if (cur.cloud_cover !== undefined && cur.cloud_cover !== null) row2.push(`云量 ${cur.cloud_cover}%`);
+    if (cur.precipitation !== undefined && cur.precipitation !== null && cur.precipitation > 0) {
+      row2.push(`当前降水 ${round(cur.precipitation)} mm`);
+    }
+    if (row2.length) lines.push(`☁️ ${row2.join('　')}`);
   }
 
-  const dates = daily.time || [];
-  if (dates.length) {
-    lines.push('', '──────────────');
-    for (let i = 0; i < Math.min(days, dates.length); i++) {
-      const [dIcon, dDesc] = describe(daily.weather_code?.[i]);
-      const label = i === 0 ? '今天' : i === 1 ? '明天' : i === 2 ? '后天' : dates[i];
-      const lo = round(daily.temperature_2m_min?.[i]);
-      const hi = round(daily.temperature_2m_max?.[i]);
-      const pop = daily.precipitation_probability_max?.[i];
-      const wind = round(daily.wind_speed_10m_max?.[i]);
-      lines.push(
-        `<b>${label}</b> ${dIcon} ${esc(dDesc)}  ${lo}~${hi}°C` +
-          (pop !== undefined && pop !== null ? `  💧${pop}%` : '') +
-          (wind !== undefined && wind !== null ? `  💨${wind}m/s` : '')
-      );
+  /* ── 逐小时 ── */
+  const hTimes = hourly.time || [];
+  if (hours > 0 && hTimes.length) {
+    const start = findHourIndex(hTimes, cur.time);
+    if (start >= 0) {
+      lines.push('', `<b>未来 ${hours} 小时</b>`);
+      for (let i = start; i < Math.min(start + hours, hTimes.length); i++) {
+        const [hIcon] = describe(hourly.weather_code?.[i]);
+        const t = round(hourly.temperature_2m?.[i]);
+        const p = hourly.precipitation_probability?.[i];
+        lines.push(
+          `${esc(String(hTimes[i]).slice(11, 16))}　${hIcon} ${t}°C` +
+            (p !== undefined && p !== null ? `　💧${p}%` : '')
+        );
+      }
     }
   }
 
-  const sun = daily.sunrise?.[0] && daily.sunset?.[0];
-  if (sun) {
-    lines.push('', `☀️ 日出 ${esc(daily.sunrise[0].slice(11))} · 日落 ${esc(daily.sunset[0].slice(11))}`);
+  /* ── 逐日 ── */
+  const dates = daily.time || [];
+  if (dates.length) {
+    const n = Math.min(days, dates.length);
+    lines.push('', `<b>未来 ${n} 天</b>`);
+    for (let i = 0; i < n; i++) {
+      const [dIcon, dDesc] = describe(daily.weather_code?.[i]);
+      const label = i === 0 ? '今天' : i === 1 ? '明天' : i === 2 ? '后天' : String(dates[i]).slice(5);
+      const lo = round(daily.temperature_2m_min?.[i]);
+      const hi = round(daily.temperature_2m_max?.[i]);
+      const pop = daily.precipitation_probability_max?.[i];
+
+      lines.push(
+        `<b>${label}</b>　${dIcon} ${esc(dDesc)}　<b>${lo}~${hi}°C</b>` +
+          (pop !== undefined && pop !== null ? `　💧${pop}%` : '')
+      );
+
+      const detail = [];
+      const wind = daily.wind_speed_10m_max?.[i];
+      if (wind !== undefined && wind !== null) {
+        const wd = windDir(daily.wind_direction_10m_dominant?.[i]);
+        detail.push(`💨 ${wd ? wd + '风 ' : ''}${round(wind)} m/s`);
+      }
+      const uv = daily.uv_index_max?.[i];
+      if (uv !== undefined && uv !== null) detail.push(`☀️ UV ${round(uv)} ${uvLevel(uv)}`);
+      const sum = daily.precipitation_sum?.[i];
+      if (sum !== undefined && sum !== null && sum > 0) detail.push(`🌧 降水 ${round(sum)} mm`);
+      if (detail.length) lines.push(`　　${detail.join('　')}`);
+    }
+  }
+
+  /* ── 空气质量 ── */
+  if (air?.current && air.current.us_aqi !== undefined && air.current.us_aqi !== null) {
+    const a = air.current;
+    const { label, dot } = aqiLevel(a.us_aqi);
+    lines.push('', '<b>空气质量</b>', `${dot} ${esc(label)}　AQI ${Math.round(a.us_aqi)}（美标）`);
+    const parts = [];
+    if (a.pm2_5 !== undefined && a.pm2_5 !== null) parts.push(`PM2.5 ${round(a.pm2_5)}`);
+    if (a.pm10 !== undefined && a.pm10 !== null) parts.push(`PM10 ${round(a.pm10)}`);
+    if (parts.length) lines.push(`　　${parts.join('　')} μg/m³`);
+  }
+
+  /* ── 日出日落 ── */
+  if (daily.sunrise?.[0] && daily.sunset?.[0]) {
+    lines.push(
+      '',
+      `☀️ 日出 ${esc(String(daily.sunrise[0]).slice(11))}　日落 ${esc(String(daily.sunset[0]).slice(11))}` +
+        (daily.daylight_duration?.[0] ? `　昼长 ${fmtDaylight(daily.daylight_duration[0])}` : '')
+    );
   }
 
   return lines.join('\n');
