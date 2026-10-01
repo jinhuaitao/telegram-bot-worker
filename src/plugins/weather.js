@@ -410,6 +410,25 @@ function renderWeather(place, data, { days = 3, air = null, hours = 6 } = {}) {
     if (row2.length) lines.push(`☁️ ${row2.join('　')}`);
   }
 
+  /* ── 空气质量（紧随「云量」下方，与实况同属「此刻」） ── */
+  if (air?.current && air.current.us_aqi !== undefined && air.current.us_aqi !== null) {
+    const a = air.current;
+    const { label, dot } = aqiLevel(a.us_aqi);
+    lines.push('<b>空气质量</b>', `${dot} ${esc(label)}　AQI ${Math.round(a.us_aqi)}（美标）`);
+    const parts = [];
+    if (a.pm2_5 !== undefined && a.pm2_5 !== null) parts.push(`PM2.5 ${round(a.pm2_5)}`);
+    if (a.pm10 !== undefined && a.pm10 !== null) parts.push(`PM10 ${round(a.pm10)}`);
+    if (parts.length) lines.push(`　　${parts.join('　')} μg/m³`);
+  }
+
+  /* ── 日出日落（同样归入「此刻」） ── */
+  if (daily.sunrise?.[0] && daily.sunset?.[0]) {
+    lines.push(
+      `☀️ 日出 ${esc(String(daily.sunrise[0]).slice(11))}　日落 ${esc(String(daily.sunset[0]).slice(11))}` +
+        (daily.daylight_duration?.[0] ? `　昼长 ${fmtDaylight(daily.daylight_duration[0])}` : '')
+    );
+  }
+
   /* ── 逐小时 ── */
   const hTimes = hourly.time || [];
   if (hours > 0 && hTimes.length) {
@@ -457,26 +476,6 @@ function renderWeather(place, data, { days = 3, air = null, hours = 6 } = {}) {
       if (sum !== undefined && sum !== null && sum > 0) detail.push(`🌧 降水 ${round(sum)} mm`);
       if (detail.length) lines.push(`　　${detail.join('　')}`);
     }
-  }
-
-  /* ── 空气质量 ── */
-  if (air?.current && air.current.us_aqi !== undefined && air.current.us_aqi !== null) {
-    const a = air.current;
-    const { label, dot } = aqiLevel(a.us_aqi);
-    lines.push('', '<b>空气质量</b>', `${dot} ${esc(label)}　AQI ${Math.round(a.us_aqi)}（美标）`);
-    const parts = [];
-    if (a.pm2_5 !== undefined && a.pm2_5 !== null) parts.push(`PM2.5 ${round(a.pm2_5)}`);
-    if (a.pm10 !== undefined && a.pm10 !== null) parts.push(`PM10 ${round(a.pm10)}`);
-    if (parts.length) lines.push(`　　${parts.join('　')} μg/m³`);
-  }
-
-  /* ── 日出日落 ── */
-  if (daily.sunrise?.[0] && daily.sunset?.[0]) {
-    lines.push(
-      '',
-      `☀️ 日出 ${esc(String(daily.sunrise[0]).slice(11))}　日落 ${esc(String(daily.sunset[0]).slice(11))}` +
-        (daily.daylight_duration?.[0] ? `　昼长 ${fmtDaylight(daily.daylight_duration[0])}` : '')
-    );
   }
 
   return lines.join('\n');

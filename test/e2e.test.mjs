@@ -210,6 +210,19 @@ check('逐日含 UV / 降水', has(r, 'UV') && has(r, '降水'));
 check('含空气质量段', has(r, '空气质量') && has(r, 'AQI') && has(r, 'PM2.5'), r.slice(0, 160));
 check('含日出日落与昼长', has(r, '日出') && has(r, '日落') && has(r, '昼长'));
 check('含逐小时预报', has(r, '未来 6 小时'));
+// 分区顺序：此刻信息（实况→云量→空气质量→日出）必须排在预报之前
+{
+  const iCloud = r.indexOf('云量');
+  const iAir = r.indexOf('空气质量');
+  const iSun = r.indexOf('日出');
+  const iHour = r.indexOf('未来 6 小时');
+  const iDay = r.indexOf('未来 3 天');
+  check(
+    '空气质量/日出排在云量下方、预报之前',
+    iCloud > -1 && iAir > iCloud && iSun > iAir && iHour > iSun && iDay > iHour,
+    `云量@${iCloud} 空气@${iAir} 日出@${iSun} 逐小时@${iHour} 逐日@${iDay}`
+  );
+}
 check('调用过空气质量接口', external.some((u) => u.includes('air-quality-api')));
 
 r = await send('/weather sub 北京 07:30');
