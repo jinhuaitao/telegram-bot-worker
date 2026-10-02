@@ -139,17 +139,12 @@
 
 ### 方式一 · Cloudflare 面板连接 GitHub
 
-#### 第 1 步 · 把代码推到 GitHub
+#### 第 1 步 · 把代码Fork到 GitHub
 
 ```bash
-cd telegram-bot-worker
-git init && git add . && git commit -m "init telegram bot"
-git branch -M main
-git remote add origin https://github.com/你的用户名/tg-multibot.git
-git push -u origin main
+把代码Fork到 GitHub
 ```
 
-> `.gitignore` 已经排除了 `.dev.vars`，密钥不会被提交上去。
 
 #### 第 2 步 · 创建机器人，拿到 Token
 
