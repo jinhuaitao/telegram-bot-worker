@@ -86,9 +86,7 @@ async function addMonitor(ctx, tokens) {
   const opts = {};
   for (const t of tokens) {
     const m = t.match(/^([a-zA-Z]+)=([\s\S]*)$/);
-    if (m && !url) {
-      opts[m[1].toLowerCase()] = m[2];
-    } else if (m) {
+    if (m) {
       opts[m[1].toLowerCase()] = m[2];
     } else if (!url) {
       url = t;
@@ -108,6 +106,14 @@ async function addMonitor(ctx, tokens) {
   }
   if (!/^https?:$/.test(parsed.protocol)) {
     await ctx.reply('❌ 只支持 http / https 协议。');
+    return;
+  }
+
+  // SSRF 防护：拒绝内网/保留地址
+  if (isPrivateHost(parsed.hostname)) {
+    await ctx.reply(
+      `❌ <code>${esc(parsed.hostname)}</code> 指向内网或保留地址，不允许监控（SSRF 防护）。`
+    );
     return;
   }
 
@@ -349,7 +355,48 @@ function stripInternal(item) {
 
 /* ─────────────────────── 探测实现 ─────────────────────── */
 
+/**
+ * 判断 hostname 是否指向内网/保留地址（SSRF 防护）。
+ * 挡掉字面量形式的回环、私有网段、链路本地（含云元数据 169.254.169.254）。
+ * 注意：DNS 解析后的 IP 不在检查范围内，主机名形式的内网域名仍需靠网络策略兜底。
+ */
+export function isPrivateHost(hostname) {
+  const h = String(hostname || '').toLowerCase().trim().replace(/\.$/, '');
+  if (!h) return true;
+  if (h === 'localhost' || h === '::1' || h === '::' || h === '0.0.0.0') return true;
+
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const nums = v4.slice(1).map(Number);
+    if (nums.some((n) => n > 255)) return true; // 非法 IP 也挡掉
+    const [a, b] = nums;
+    if (a === 0) return true; // 0.0.0.0/8
+    if (a === 127) return true; // 127.0.0.0/8 回环
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 169 && b === 254) return true; // 169.254.0.0/16 链路本地
+    return false;
+  }
+
+  // IPv6 字面量（URL 解析后 hostname 不带方括号）
+  if (h.includes(':')) {
+    return h === '::1' || h === '::' || h === '0:0:0:0:0:0:0:1';
+  }
+  return false;
+}
+
 async function probe(item) {
+  // 纵深防御：cron 里加载的历史监控项也要再检查一次
+  try {
+    const u = new URL(item.url);
+    if (isPrivateHost(u.hostname)) {
+      return { ok: false, status: 0, latency: 0, problems: ['目标地址指向内网，已拦截（SSRF 防护）'] };
+    }
+  } catch {
+    return { ok: false, status: 0, latency: 0, problems: ['URL 非法'] };
+  }
+
   const started = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), item.timeoutMs || DEFAULTS.timeoutMs);

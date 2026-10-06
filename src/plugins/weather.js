@@ -55,6 +55,7 @@ export default {
     weather: {
       desc: '查天气 / 管理订阅',
       usage: '/weather 北京  |  /weather sub 北京 07:30  |  /weather list  |  /weather off [城市]',
+      alias: ['w'],
       detail: [
         '示例：',
         '  <code>/weather 上海</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',

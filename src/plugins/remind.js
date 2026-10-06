@@ -19,6 +19,7 @@ export default {
     remind: {
       desc: '设置定时提醒',
       usage: '/remind <时间> <内容>',
+      alias: ['r'],
       detail: [
         '<b>支持的时间写法</b>：',
         '  <code>10m</code> / <code>2h</code> / <code>1d</code> / <code>30分钟</code> / <code>2小时</code>',

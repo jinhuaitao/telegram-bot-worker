@@ -160,6 +160,8 @@ const env = {
   DEFAULT_TZ: 'Asia/Shanghai',
   TRANSLATE_PROVIDER: 'auto',
   MAX_MONITOR_PER_TICK: '20',
+  // 集成测试会在一分钟内发几十条命令，关闭生产环境的命令限流（不影响任何断言）
+  DISABLE_RATE_LIMIT: '1',
 };
 const app = {
   env,
