@@ -68,18 +68,20 @@ export default {
     },
   },
   
-  weather_shanghai: {
-    desc: '一键查看上海天气',
-    usage: '/weather_shanghai  |  /weather_shanghai sub [HH:MM]',
-    alias: ['上海'],
-    detail: [
-      '城市固定为上海，无需输入城市名：',
-      '  <code>/weather_shanghai</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',
-    ].join('\n'),
-    run: handleShanghai,
+    weather_shanghai: {
+      desc: '一键查看上海天气',
+      usage: '/weather_shanghai  |  /weather_shanghai sub [HH:MM]',
+      alias: ['上海'],
+      detail: [
+        '城市固定为上海，无需输入城市名：',
+        '  <code>/weather_shanghai</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',
+        '  <code>/weather_shanghai sub 07:30</code> — 每天 07:30 推送上海天气',
+        '  <code>/weather_shanghai off</code> — 取消上海的天气推送',
+      ].join('\n'),
+      run: handleShanghai,
+    },
   },
-},
-  
+
   cron: cronWeather,
 };
 
