@@ -67,6 +67,7 @@ export default {
       run: handleWeather,
     },
   },
+  
   weather_shanghai: {
     desc: '一键查看上海天气',
     usage: '/weather_shanghai  |  /weather_shanghai sub [HH:MM]',
@@ -78,6 +79,7 @@ export default {
     run: handleShanghai,
   },
 },
+  
   cron: cronWeather,
 };
 
