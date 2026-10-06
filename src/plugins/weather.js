@@ -66,8 +66,7 @@ export default {
       ].join('\n'),
       run: handleWeather,
     },
-  },
-  
+
     weather_shanghai: {
       desc: '一键查看上海天气',
       usage: '/weather_shanghai  |  /weather_shanghai sub [HH:MM]',
@@ -101,6 +100,25 @@ async function handleWeather(ctx) {
 
   // 否则当作城市名，直接查询
   return queryCity(ctx, [first, ...rest].join(' ').trim());
+}
+
+/* ───────────────── /weather_shanghai：城市固定为上海的快捷命令 ───────────────── */
+
+async function handleShanghai(ctx) {
+  const [first, ...rest] = ctx.argv;
+  const sub = (first || '').toLowerCase();
+
+  if (sub === 'sub' || sub === 'subscribe' || sub === '订阅') {
+    return subscribe(ctx, ['上海', ...rest]);
+  }
+  if (sub === 'off' || sub === 'unsub' || sub === '取消') {
+    return unsubscribe(ctx, '上海');
+  }
+  if (sub === 'list' || sub === 'ls' || sub === '列表') {
+    return showList(ctx);
+  }
+  // 城市名固定为上海，复用通用查询
+  return queryCity(ctx, '上海');
 }
 
 async function queryCity(ctx, city) {

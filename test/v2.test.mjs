@@ -146,6 +146,9 @@ eq('r → remind', cmdMap.get('r')?.plugin.name, 'remind');
 eq('别名标记 isAlias', cmdMap.get('w')?.isAlias, true);
 eq('原命令非别名', cmdMap.get('weather')?.isAlias, false);
 ok('别名与原命令同 run', cmdMap.get('w')?.run === cmdMap.get('weather')?.run);
+eq('weather_shanghai 注册', cmdMap.get('weather_shanghai')?.plugin.name, 'weather');
+eq('shanghai → weather_shanghai', cmdMap.get('shanghai')?.plugin.name, 'weather');
+ok('别名 shanghai 同 weather_shanghai 的 run', cmdMap.get('shanghai')?.run === cmdMap.get('weather_shanghai')?.run);
 eq('新插件全部注册', ['ai', 'rss', 'fx', 'todo', 'backup'].map((n) => PLUGINS.some((p) => p.name === n)), [true, true, true, true, true]);
 eq('插件契约校验通过', validatePlugins(PLUGINS), []);
 
