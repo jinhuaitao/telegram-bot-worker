@@ -92,11 +92,11 @@ export default {
 
   commands: {
     fx: {
-      desc: '查询汇率 / 货币换算',
-      usage: '/fx 100 USD CNY  |  /fx USD CNY  |  /fx 100 美元 人民币  |  /fx list',
+      desc: '查询汇率 / 货币换算（默认 1 美元=多少人民币）',
+      usage: '/fx  |  /fx 100 USD CNY  |  /fx USD JPY  |  /fx list',
       detail: [
         '示例：',
-        '  <code>/fx USD CNY</code> — 1 美元 = 多少人民币',
+        '  <code>/fx</code> — 1 美元 = 多少人民币（默认）',
         '  <code>/fx 100 USD CNY</code> — 100 美元 = 多少人民币',
         '  <code>/fx 100 美元 人民币</code> — 支持中文货币名',
         '  <code>/fx EUR</code> — 1 欧元 = 多少人民币（默认目标 CNY）',
@@ -111,14 +111,8 @@ async function handleFx(ctx) {
   const argv = ctx.argv;
 
   if (!argv.length) {
-    await ctx.reply(
-      [
-        '用法：<code>/fx 100 USD CNY</code>',
-        '例如：<code>/fx 100 美元 人民币</code>、<code>/fx USD JPY</code>',
-        '用 <code>/fx list</code> 查看支持的货币。',
-      ].join('\n')
-    );
-    return;
+    // 默认：/fx 就是 1 美元 = 多少人民币
+    argv.push('USD', 'CNY');
   }
 
   const first = argv[0].toLowerCase();
@@ -133,13 +127,9 @@ async function handleFx(ctx) {
 
   const maybeAmount = parseAmount(argv[0]);
   if (maybeAmount !== null) {
-    // 第一个是金额
-    if (argv.length < 2) {
-      await ctx.reply('用法：<code>/fx 100 USD CNY</code>，例如 <code>/fx 100 美元 人民币</code>');
-      return;
-    }
+    // 第一个是金额：/fx 100 → 默认按 100 美元 = 多少人民币算
     amount = maybeAmount;
-    fromRaw = argv[1];
+    fromRaw = argv[1] || 'USD';
     toRaw = argv[2] || 'CNY';
   } else {
     fromRaw = argv[0];
