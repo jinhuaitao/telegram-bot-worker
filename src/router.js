@@ -15,30 +15,6 @@ export function parseCommand(text) {
   return { cmd: m[1].toLowerCase(), args: (m[2] || '').trim() };
 }
 
-/* ─────────────────────── 简易限流 ───────────────────────
- * 每个 chat 每分钟最多 20 条命令，超限给友好提示。
- * 用常驻内存 Map 记录（同 isolate 内共享）；冷启动重置可接受，
- * Map 过大时顺手清理过期桶防止无限增长。
- */
-const RATE_WINDOW_MS = 60000;
-const RATE_MAX = 20;
-const rateBuckets = new Map(); // chatId -> { count, start }
-
-export function checkRateLimit(chatId, now = Date.now(), max = RATE_MAX) {
-  let bucket = rateBuckets.get(chatId);
-  if (!bucket || now - bucket.start >= RATE_WINDOW_MS) {
-    bucket = { count: 0, start: now };
-    rateBuckets.set(chatId, bucket);
-  }
-  if (rateBuckets.size > 20000) {
-    for (const [k, v] of rateBuckets) {
-      if (now - v.start >= RATE_WINDOW_MS) rateBuckets.delete(k);
-    }
-  }
-  bucket.count += 1;
-  return bucket.count <= max;
-}
-
 /** 构造 ctx（对每个 update 调用一次） */
 function createContext(app, message) {
   const chatId = message.chat.id;
@@ -114,14 +90,6 @@ async function handleMessage(app, message) {
     return;
   }
 
-  // 限流：每个 chat 每分钟最多 20 条命令。
-  // RATE_LIMIT_MAX 可覆盖默认值；DISABLE_RATE_LIMIT=1 可关闭（集成测试用）。
-  const rateMax = Number(app.env.RATE_LIMIT_MAX ?? RATE_MAX);
-  if (!app.env.DISABLE_RATE_LIMIT && rateMax > 0 && !checkRateLimit(ctx.chatId, Date.now(), rateMax)) {
-    await ctx.reply('⚠️ 你操作得太快了，歇一会儿再试（每分钟最多 20 条命令）。');
-    return;
-  }
-
   try {
     await entry.run(ctx);
   } catch (err) {
@@ -145,7 +113,6 @@ async function handleCallback(app, query) {
     chatId: query.message?.chat?.id,
     from: query.from,
     message: query.message,
-    callbackId: query.id,
     text: '',
     args: '',
     argv: [],

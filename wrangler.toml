@@ -10,8 +10,7 @@ compatibility_date = "2025-04-01"
 keep_vars = true
 
 # ── 定时触发器 ───────────────────────────────────────────────
-# 每分钟唤醒一次，负责：提醒派发、监控探活、天气定时推送、RSS 检查
-# （RSS 订阅按各自的 intervalMin 决定是否真的抓取，默认 30 分钟）
+# 每分钟唤醒一次，负责：提醒派发、监控探活、天气定时推送
 [triggers]
 crons = ["* * * * *"]
 
@@ -32,19 +31,16 @@ crons = ["* * * * *"]
 [[r2_buckets]]
 binding = "BOT_R2"
 
-# ── Workers AI（翻译 + AI 聊天用）────────────────────────────────
+# ── Workers AI（翻译用）──────────────────────────────────────
 #
-# 绑定后：
-#   · /tr 会优先用 Cloudflare 自家的 m2m100 翻译模型，
-#     不再依赖 Google 的公开端点，也就不会遇到 429 限流。
-#   · /ai 聊天插件可用（llama-3.1-8b-instruct），不绑定则 /ai 会提示开通指引。
+# 绑定后 /tr 会优先用 Cloudflare 自家的 m2m100 翻译模型，
+# 不再依赖 Google 的公开端点，也就不会遇到 429 限流。
 #
 # 免费额度：10000 neurons/天。翻译 100 字大约消耗 6 neurons，
 # 折算下来每天能翻 1500 次左右，个人使用绰绰有余。
 #
 # 如果你的账号暂时用不了 Workers AI（部署时报错），
-# 把下面两行注释掉即可 —— 翻译会自动降级到 Google / MyMemory，
-# /ai 会提示用户去绑定。
+# 把下面两行注释掉即可 —— 翻译会自动降级到 Google / MyMemory。
 [ai]
 binding = "AI"
 
@@ -59,16 +55,6 @@ TRANSLATE_PROVIDER = "auto"
 
 # 单次 cron 最多检查多少个监控项，防止 subrequest 超限
 MAX_MONITOR_PER_TICK = "20"
-
-# 命令限流：每个 chat 每分钟最多处理多少条命令（默认 20）。
-# 设为 0 或 DISABLE_RATE_LIMIT=1 可关闭（集成测试用，生产环境别关）。
-# RATE_LIMIT_MAX = "20"
-
-# RSS 订阅默认检查间隔（分钟）。添加订阅时可用 interval=60 单独覆盖。
-RSS_INTERVAL_MIN = "30"
-
-# 单次 cron 最多检查多少个 RSS 订阅
-# MAX_RSS_PER_TICK = "10"
 
 # 可选：填上你的邮箱，MyMemory 的免费额度会从 5000 字/天 提到 50000 字/天
 # MYMEMORY_EMAIL = "you@example.com"

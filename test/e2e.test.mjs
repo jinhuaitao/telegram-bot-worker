@@ -77,15 +77,6 @@ globalThis.fetch = async (url, opts = {}) => {
   external.push(u);
 
   if (u.includes('geocoding-api.open-meteo.com')) {
-    const name = decodeURIComponent((u.match(/name=([^&]*)/)?.[1] || '').replace(/\+/g, ' '));
-    if (name.includes('上海')) {
-      return json({
-        results: [{
-          name: '上海', latitude: 31.23, longitude: 121.47,
-          timezone: 'Asia/Shanghai', country: '中国', admin1: '上海市',
-        }],
-      });
-    }
     return json({
       results: [{
         name: '北京', latitude: 39.9, longitude: 116.4,
@@ -169,8 +160,6 @@ const env = {
   DEFAULT_TZ: 'Asia/Shanghai',
   TRANSLATE_PROVIDER: 'auto',
   MAX_MONITOR_PER_TICK: '20',
-  // 集成测试会在一分钟内发几十条命令，关闭生产环境的命令限流（不影响任何断言）
-  DISABLE_RATE_LIMIT: '1',
 };
 const app = {
   env,
@@ -265,21 +254,6 @@ check('订阅列表可见', has(r, '天气订阅') && has(r, '北京'));
 
 r = await send('/weather off 北京');
 check('取消订阅成功', has(r, '已取消'));
-
-r = await send('/weather_shanghai');
-check('/weather_shanghai 直接查上海天气', has(r, '上海') && has(r, '实况') && has(r, '18.5°C'));
-
-r = await send('/shanghai');
-check('别名 /shanghai 生效', has(r, '上海') && has(r, '实况'));
-
-r = await send('/weather_shanghai sub 08:00');
-check('/weather_shanghai sub 订阅成功', has(r, '订阅成功') && has(r, '上海') && has(r, '08:00'));
-
-r = await send('/weather list');
-check('上海订阅出现在列表', has(r, '天气订阅') && has(r, '上海'));
-
-r = await send('/weather_shanghai off');
-check('/weather_shanghai off 取消成功', has(r, '已取消') && has(r, '上海'));
 
 console.log('\n【监控插件】');
 r = await send('/mon add https://example.com name=官网 interval=1 expect=200');

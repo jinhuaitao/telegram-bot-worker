@@ -9,7 +9,7 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "setup": "node scripts/setup.mjs",
-    "test": "node test/unit.test.mjs && node test/entry.test.mjs && node test/e2e.test.mjs && node test/v2.test.mjs"
+    "test": "node test/unit.test.mjs && node test/entry.test.mjs && node test/e2e.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

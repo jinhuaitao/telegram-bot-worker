@@ -81,37 +81,6 @@ export class Telegram {
     return this.call('answerCallbackQuery', { callback_query_id: id, text, show_alert: showAlert });
   }
 
-  /**
-   * 发送文件。用 multipart/form-data 上传，适合 /export 这类动态生成的内容。
-   * @param {object} file { filename, content(string|Blob), mime }
-   * @param {object} opts { caption }
-   */
-  async sendDocument(chatId, file, opts = {}) {
-    const body = new FormData();
-    body.append('chat_id', String(chatId));
-    const blob =
-      file.content instanceof Blob
-        ? file.content
-        : new Blob([String(file.content ?? '')], { type: file.mime || 'application/octet-stream' });
-    body.append('document', blob, file.filename || 'file.bin');
-    if (opts.caption) {
-      body.append('caption', opts.caption);
-      body.append('parse_mode', 'HTML');
-    }
-
-    const res = await fetch(`${this.base}/sendDocument`, { method: 'POST', body });
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      throw new Error(`Telegram sendDocument 返回非 JSON（HTTP ${res.status}）`);
-    }
-    if (!data.ok) {
-      throw new Error(`Telegram sendDocument 失败：${data.description || res.status}`);
-    }
-    return data.result;
-  }
-
   /** 显示「正在输入…」 */
   async sendChatAction(chatId, action = 'typing') {
     return this.call('sendChatAction', { chat_id: chatId, action }).catch(() => null);

@@ -15,7 +15,7 @@ import { esc } from './utils.js';
  * 代码版本标记。改功能时顺手更新 ——
  * /setup?action=diagnose 会把它显示出来，方便确认线上跑的到底是哪一版。
  */
-const CODE_VERSION = '2026-10-06 · v2（多源翻译降级 + AI/RSS/汇率/待办/备份/限流/SSRF）';
+const CODE_VERSION = '2026-10-01 · 多源翻译降级';
 
 /** 组装一次性的应用上下文 */
 function createApp(env) {
@@ -46,24 +46,6 @@ export default {
     }
 
     // 健康检查 / 状态页
-    // /healthz 返回机器可读的 JSON，供 Uptime Kuma 等外部监控轮询
-    if (url.pathname === '/healthz') {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          version: CODE_VERSION,
-          plugins: PLUGINS.map((p) => p.name),
-          time: new Date().toISOString(),
-        }),
-        {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Cache-Control': 'no-store',
-          },
-        }
-      );
-    }
     if (request.method === 'GET') {
       return html(statusPage(env, url));
     }

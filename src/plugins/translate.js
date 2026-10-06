@@ -49,7 +49,6 @@ export default {
     tr: {
       desc: '翻译文本',
       usage: '/tr [目标语言] <文本>  ·  或回复某条消息发 /tr',
-      alias: ['t'],
       detail: [
         '不指定目标语言时自动判断：中文→英文，其他→中文。',
         '',

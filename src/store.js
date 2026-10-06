@@ -6,9 +6,6 @@
  *   wx:{chatId}:{citySlug}        天气订阅        { city, lat, lon, tz, pushAt, lastPushDate }
  *   mon:{chatId}:{id}             监控项          { url, intervalMin, failCount, alerted, ... }
  *   rm:{paddedTs}:{chatId}:{id}   定时提醒        { text, at, tz, createdAt }
- *   ai:{chatId}                   AI 对话上下文   { messages, updatedAt }
- *   rss:{chatId}:{id}             RSS 订阅        { url, name, lastGuid, lastCheck, intervalMin, enabled }
- *   td:{chatId}:{id}              待办事项        { text, done, createdAt }
  *
  * 提醒的 key 用 14 位补零时间戳打头，使 R2 的 list 字典序天然等价于时间序遍历，
  * 这样 cron 只需从头扫、遇到未到期即可停止。

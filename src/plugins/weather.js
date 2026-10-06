@@ -55,7 +55,6 @@ export default {
     weather: {
       desc: '查天气 / 管理订阅',
       usage: '/weather 北京  |  /weather sub 北京 07:30  |  /weather list  |  /weather off [城市]',
-      alias: ['w'],
       detail: [
         '示例：',
         '  <code>/weather 上海</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',
@@ -66,18 +65,11 @@ export default {
       ].join('\n'),
       run: handleWeather,
     },
-
     weather_shanghai: {
-      desc: '一键查看上海天气',
-      usage: '/weather_shanghai  |  /weather_shanghai sub [HH:MM]',
-      alias: ['shanghai'],
-      detail: [
-        '城市固定为上海，无需输入城市名：',
-        '  <code>/weather_shanghai</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',
-        '  <code>/weather_shanghai sub 07:30</code> — 每天 07:30 推送上海天气',
-        '  <code>/weather_shanghai off</code> — 取消上海的天气推送',
-      ].join('\n'),
-      run: handleShanghai,
+      desc: '一键查询上海天气',
+      usage: '/weather_shanghai',
+      detail: '快捷命令，等同于 <code>/weather 上海</code>，返回实况 + 逐小时 + 未来 3 天 + 空气质量。',
+      run: (ctx) => queryCity(ctx, '上海'),
     },
   },
 
@@ -100,25 +92,6 @@ async function handleWeather(ctx) {
 
   // 否则当作城市名，直接查询
   return queryCity(ctx, [first, ...rest].join(' ').trim());
-}
-
-/* ───────────────── /weather_shanghai：城市固定为上海的快捷命令 ───────────────── */
-
-async function handleShanghai(ctx) {
-  const [first, ...rest] = ctx.argv;
-  const sub = (first || '').toLowerCase();
-
-  if (sub === 'sub' || sub === 'subscribe' || sub === '订阅') {
-    return subscribe(ctx, ['上海', ...rest]);
-  }
-  if (sub === 'off' || sub === 'unsub' || sub === '取消') {
-    return unsubscribe(ctx, '上海');
-  }
-  if (sub === 'list' || sub === 'ls' || sub === '列表') {
-    return showList(ctx);
-  }
-  // 城市名固定为上海，复用通用查询
-  return queryCity(ctx, '上海');
 }
 
 async function queryCity(ctx, city) {

@@ -13,7 +13,6 @@ export default {
     help: { desc: '查看帮助', usage: '/help [命令]', run: showHelp },
     id: { desc: '查看当前会话 ID', usage: '/id', run: showId },
     ping: { desc: '连通性自检', usage: '/ping', run: showPing },
-    stats: { desc: '查看本会话数据统计', usage: '/stats', run: showStats },
   },
 };
 
@@ -32,7 +31,6 @@ async function showHelp(ctx) {
       `<b>/${esc(key)}</b> — ${esc(entry.desc || '')}`,
       '',
       entry.usage ? `用法：<code>${esc(entry.usage)}</code>` : '',
-      entry.alias?.length ? `别名：${entry.alias.map((a) => `<code>/${esc(a)}</code>`).join(' ')}` : '',
       entry.detail ? `\n${entry.detail}` : '',
       entry.plugin ? `\n所属插件：${esc(entry.plugin.title || entry.plugin.name)}` : '',
     ];
@@ -40,10 +38,10 @@ async function showHelp(ctx) {
     return;
   }
 
-  // 按插件分组输出全部命令（别名不重复展示）
+  // 按插件分组输出全部命令
   const groups = new Map();
   for (const [name, entry] of app.commands) {
-    if (entry.hidden || entry.isAlias) continue;
+    if (entry.hidden) continue;
     const p = entry.plugin || { name: 'misc', title: '其他' };
     if (!groups.has(p.name)) groups.set(p.name, { title: p.title || p.name, summary: p.summary, items: [] });
     groups.get(p.name).items.push({ name, ...entry });
@@ -51,7 +49,7 @@ async function showHelp(ctx) {
 
   const blocks = [
     '🤖 <b>多功能机器人</b>',
-    '<i>天气订阅 · 监控告警 · 定时提醒 · 翻译 · AI 聊天 · RSS · 汇率 · 待办</i>',
+    '<i>天气订阅 · 监控告警 · 定时提醒 · 翻译</i>',
     '',
   ];
 
@@ -91,39 +89,6 @@ async function showPing(ctx) {
       `Telegram API 往返：${t1 - t0} ms`,
       `时区：<code>${esc(settings.tz)}</code>`,
       me ? `机器人：@${esc(me.username)}` : '机器人信息获取失败',
-    ].join('\n')
-  );
-}
-
-async function showStats(ctx) {
-  const chatId = ctx.chatId;
-
-  // 提醒的 key 是 rm:{时间戳}:{chatId}:{id}，按 chatId 过滤
-  const rmNames = await ctx.store.listNames('rm:');
-  const myRms = rmNames.filter((n) => n.split(':')[2] === String(chatId));
-
-  const [wx, mon, rss, todos] = await Promise.all([
-    ctx.store.listNames(`wx:${chatId}:`),
-    ctx.store.listJSON(`mon:${chatId}:`),
-    ctx.store.listNames(`rss:${chatId}:`),
-    ctx.store.listJSON(`td:${chatId}:`),
-  ]);
-
-  const todoOpen = todos.filter((t) => !t.done).length;
-  const monActive = mon.filter((m) => m.enabled).length;
-  const rssActive = rss.length; // listNames 只返回 key；enabled 状态省略，列订阅总数
-
-  await ctx.reply(
-    [
-      '📊 <b>本会话统计</b>',
-      '',
-      `🌤 天气订阅：${wx.length}`,
-      `📡 监控项：${monActive} 启用 / ${mon.length} 总数`,
-      `⏰ 待办提醒：${myRms.length}`,
-      `📰 RSS 订阅：${rssActive}`,
-      `📝 待办事项：${todoOpen} 未完成 / ${todos.length} 总数`,
-      '',
-      '用 <code>/export</code> 可把这些数据导出备份。',
     ].join('\n')
   );
 }

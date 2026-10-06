@@ -97,14 +97,12 @@
                                    │
                     ┌──────────────▼──────────────┐
                     │  plugins/index.js  注册表    │
-                    └──┬────┬────┬────┬────┬───┬───┬───┐
-                       │    │    │    │    │   │   │   │
-                    weather mon remind  tr  help ai rss fx
-                    settings            todo backup
+                    └──┬────┬────┬────┬────┬──────┘
+                       │    │    │    │    │
+                    weather mon remind  tr  help/settings
                        │    │    │    │
                        └────┴────┴────┴──▶ R2 (BOT_R2)
                                             cfg: / wx: / mon: / rm:
-                                            ai: / rss: / td:
 ```
 
 **几个设计要点：**
@@ -119,9 +117,6 @@
 | 每个插件独立 try/catch             | 一个插件抛错不影响其他插件和整体调度                                           |
 | `wrangler.toml` 只写绑定名不写 ID   | 用 Wrangler 的自动预置，面板连 GitHub 和 CLI 两条路都不用手动建资源                |
 | Worker 自带 `/setup` 端点        | 面板部署的用户不必装命令行工具，浏览器打开一个地址就能注册 Webhook                        |
-| `/healthz` 返回 JSON          | 供 Uptime Kuma 等外部监控轮询：`{ok, version, plugins, time}`                             |
-| 命令限流（每 chat 每分钟 20 条） | 内存 Map 实现，防刷屏；冷启动重置可接受                                                  |
-| 监控 SSRF 防护                | 拒绝探测内网/保留地址（localhost、10.x、192.168.x、169.254.169.254 等）                    |
 
 ---
 
@@ -362,72 +357,6 @@ BOT_TOKEN=你的token WEBHOOK_SECRET=你设的密钥 \
 > 默认用 Google 翻译的公开端点，无需 Key。  
 > 如果被限流，可以在 `wrangler.toml` 里把 `TRANSLATE_PROVIDER` 改成 `mymemory`。
 
-### 🤖 AI 聊天（需绑定 Workers AI）
-
-| 命令 | 说明 |
-| ---- | ---- |
-| `/ai <问题>` | 和 AI 对话，记住最近 10 轮上下文 |
-| `/ai clear` | 手动清空上下文 |
-
-```bash
-/ai 帮我写一封请假邮件
-/ai 再正式一点        ← 接得上上一句
-```
-
-> 需要在 `wrangler.toml` 里保留 `[ai] binding = "AI"` 并重新部署。  
-> 超过 24 小时没聊，上下文自动清空。未绑定时会给出开通指引。
-
-### 📰 RSS 订阅
-
-| 命令 | 说明 |
-| ---- | ---- |
-| `/rss add <url> [name=名字]` | 添加订阅（先抓取验证 feed 有效） |
-| `/rss list` | 查看全部订阅 |
-| `/rss del <id>` | 取消订阅 |
-| `/rss on <id>` / `/rss off <id>` | 恢复 / 暂停 |
-
-```bash
-/rss add https://example.com/feed.xml name=示例博客
-/rss add https://example.com/atom.xml interval=60   # 每小时检查一次
-```
-
-> 支持 RSS 2.0 和 Atom。有新文章时自动推送标题 + 链接。  
-> 默认每 30 分钟检查一次（`wrangler.toml` 的 `RSS_INTERVAL_MIN` 可改）。
-
-### 💱 汇率（数据源 frankfurter.app，免费无 Key）
-
-| 命令 | 说明 |
-| ---- | ---- |
-| `/fx USD CNY [金额]` | 查询汇率并换算，默认 USD→CNY |
-| `/fx 100 USD CNY` | 金额写前面也行 |
-| `/fx list` | 查看支持的常用货币 |
-
-```bash
-/fx USD CNY        → 1 美元兑多少人民币
-/fx EUR CNY 100    → 100 欧元兑多少人民币
-```
-
-### 📝 待办清单
-
-| 命令 | 说明 |
-| ---- | ---- |
-| `/todo add <内容>` | 加一条待办 |
-| `/todo list` | 查看清单（带内联按钮，点一下勾选/取消） |
-| `/todo done <id>` | 标记完成 |
-| `/todo del <id>` | 删除 |
-| `/todo clear` | 清空全部 |
-
-> 和 `/remind` 的区别：remind 是「到点推送」的定时提醒，todo 是「一直躺着」的持久清单。
-
-### 📦 数据备份
-
-| 命令 | 说明 |
-| ---- | ---- |
-| `/export` | 把本会话全部数据导出为 JSON 文件 |
-| `/stats` | 查看本会话数据统计（订阅/监控/提醒/RSS/待办数） |
-
-导出的 JSON 包含：设置、天气订阅、监控项、提醒、RSS 订阅、待办清单、AI 上下文。
-
 ### ⚙️ 设置
 
 | 命令                       | 说明               |
@@ -444,35 +373,36 @@ BOT_TOKEN=你的token WEBHOOK_SECRET=你设的密钥 \
 | `/help weather` | 查看某个命令的详细用法            |
 | `/id`           | 查看当前会话 ID              |
 | `/ping`         | 连通性自检，显示 Telegram 往返延迟 |
-| `/stats`        | 本会话数据统计               |
-| `/export`       | 导出本会话全部数据为 JSON 文件    |
-
-> 命令别名：`/w`→`/weather`、`/t`→`/tr`、`/r`→`/remind`。用 `/help w` 也能查到对应说明。
 
 ---
 
 ## 插件开发：3 步加一个新功能
 
-假设你要加一个「每日一言」插件（`/fx` 汇率插件就是这么长出来的，现在它是内置功能了）。
+假设你要加一个「汇率查询」插件。
 
-### 第 1 步 · 新建 `src/plugins/motto.js`
+### 第 1 步 · 新建 `src/plugins/fx.js`
 
 ```js
 import { esc, fetchWithTimeout } from '../utils.js';
 
 export default {
-  name: 'motto',
-  title: '一言',
-  summary: '每天一句格言',
+  name: 'fx',
+  title: '汇率',
+  summary: '查询实时汇率',
 
   commands: {
-    motto: {
-      desc: '来一句格言',
-      usage: '/motto',
+    fx: {
+      desc: '查询汇率',
+      usage: '/fx USD CNY',
       run: async (ctx) => {
-        const res = await fetchWithTimeout('https://v1.hitokoto.cn/?c=d&encode=text');
-        const text = await res.text();
-        await ctx.reply(`📜 ${esc(text.trim())}`);
+        const [from = 'USD', to = 'CNY'] = ctx.argv;
+        const res = await fetchWithTimeout(
+          `https://api.frankfurter.app/latest?from=${from}&to=${to}`
+        );
+        const data = await res.json();
+        const rate = data?.rates?.[to];
+        if (!rate) return ctx.reply('查不到这个货币对。');
+        await ctx.reply(`💱 1 ${esc(from)} = <b>${esc(rate)}</b> ${esc(to)}`);
       },
     },
   },
@@ -485,11 +415,11 @@ export default {
 ### 第 2 步 · 注册到 `src/plugins/index.js`
 
 ```js
-import motto from './motto.js';
+import fx from './fx.js';
 
 export const PLUGINS = [
   help, weather, monitor, remind, translate, settings,
-  motto,       // ← 加这一行
+  fx,          // ← 加这一行
 ];
 ```
 
@@ -499,21 +429,21 @@ export const PLUGINS = [
 npm test && npx wrangler deploy
 ```
 
-完成。`/help` 里会自动出现「一言」分组，`/motto` 立即可用 —— **核心代码一行都不用改**。
+完成。`/help` 里会自动出现「汇率」分组，`/fx USD CNY` 立即可用 —— **核心代码一行都不用改**。
 
 ### 插件契约速查
 
 ```js
 export default {
-  name:    'motto',     // 唯一标识
-  title:   '一言',        // /help 里的分组名
+  name:    'fx',        // 唯一标识
+  title:   '汇率',       // /help 里的分组名
   summary: '一句话说明',  // /help 里的副标题
 
   commands: {
     命令名: {            // 键名即 /命令名
       desc:   '一句话描述',
-      usage:  '/motto',              // 可选
-      detail: '多行详细说明（HTML）', // 可选，/help motto 时显示
+      usage:  '/fx USD CNY',        // 可选
+      detail: '多行详细说明（HTML）', // 可选，/help fx 时显示
       hidden: false,                // 可选，true 则不在 /help 出现
       run: async (ctx) => {},
     },
@@ -537,7 +467,7 @@ export default {
 | `ctx.reply(html, extra)`               | 回复当前消息（HTML 模式，超长自动分片）                                                         |
 | `ctx.send(html)`                       | 发送但不引用原消息                                                                      |
 | `ctx.store`                            | R2 封装：`getJSON` / `setJSON` / `del` / `listJSON` / `listNames` / `clearPrefix` |
-| `ctx.bot`                              | Telegram API：`sendMessage` / `editMessageText` / `sendChatAction` / `sendDocument` 等     |
+| `ctx.bot`                              | Telegram API：`sendMessage` / `editMessageText` / `sendChatAction` 等            |
 | `ctx.env`                              | 环境变量与绑定                                                                        |
 | `ctx.loadSettings()`                   | 取用户设置（含 `tz`、`muted`，已带默认值和时区校验）                                               |
 
@@ -607,7 +537,7 @@ bucket 不用手动建 —— `wrangler.toml` 里只写了 `binding = "BOT_R2"` 
 
 但**开通 R2 本身需要先在账号上做一次性操作**：Cloudflare 面板 → R2 → 走 checkout 加一个支付方式（免费额度内为 `$0`）。这一步不做的话，自动预置建 bucket 会失败。
 
-所有订阅、监控项、提醒、RSS、待办都存在这个 bucket 里，key 前缀分别是 `cfg:` / `wx:` / `mon:` / `rm:` / `ai:` / `rss:` / `td:`。想看或清空，去 **Storage & databases → R2 → 选中 bucket**。
+所有订阅、监控项、提醒都存在这个 bucket 里，key 前缀分别是 `cfg:` / `wx:` / `mon:` / `rm:`。想看或清空，去 **Storage & databases → R2 → 选中 bucket**。
 
 > 注意：如果你之前用的是 KV，换成 R2 后数据是**重新从空开始**的 —— 两者是不同产品，不会自动迁移。老 KV 里的订阅需要在 Telegram 里重新订一遍，或自行用 `wrangler` 导出后写入 R2。
 
@@ -648,28 +578,22 @@ telegram-bot-worker/
 ├── scripts/
 │   └── setup.mjs              # 命令行版 Webhook 设置脚本（面板部署用不上）
 ├── src/
-│   ├── index.js               # 入口：fetch / scheduled / setup（自注册 Webhook）/ /healthz
-│   ├── router.js              # 解析 update → 构造 ctx → 限流 → 分发到插件
+│   ├── index.js               # 入口：fetch / scheduled / setup（自注册 Webhook）
+│   ├── router.js              # 解析 update → 构造 ctx → 分发到插件
 │   ├── cron.js                # 定时调度：把 cronCtx 广播给各插件
-│   ├── telegram.js            # Telegram API 封装（429 重试、自动分片、sendDocument）
+│   ├── telegram.js            # Telegram API 封装（429 重试、自动分片）
 │   ├── store.js               # R2 封装 + key 命名空间约定
 │   ├── utils.js               # 时区换算、自然语言时间解析、转义
 │   └── plugins/
-│       ├── index.js           # ★ 插件注册表（加插件只改这里，支持命令 alias）
-│       ├── help.js            # 帮助 / /ping / /id / /stats
-│       ├── settings.js        # 时区、静音
-│       ├── weather.js         # 天气查询与订阅（别名 /w）
-│       ├── monitor.js         # 站点监控 + SSRF 防护
-│       ├── remind.js          # 定时提醒（别名 /r）
-│       ├── translate.js       # 多源降级翻译（别名 /t）
-│       ├── ai.js              # AI 聊天（Workers AI，R2 存 10 轮上下文）
-│       ├── rss.js             # RSS 订阅与新文章推送
-│       ├── fx.js              # 汇率查询（frankfurter.app）
-│       ├── todo.js            # 待办清单（内联按钮勾选）
-│       └── backup.js          # /export 数据导出
+│       ├── index.js           # ★ 插件注册表（加插件只改这里）
+│       ├── help.js
+│       ├── settings.js
+│       ├── weather.js
+│       ├── monitor.js
+│       ├── remind.js
+│       └── translate.js
 └── test/
-    ├── unit.test.mjs          # 时区 / 时间解析 / key 排序 单元测试
-    ├── entry.test.mjs         # Worker 入口、路由边界、Webhook 安全校验与自注册
-    ├── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖
-    └── v2.test.mjs            # v2 新增：fx / todo / rss 解析 / ai 上下文 / 限流 / SSRF
+    ├── unit.test.mjs          # 时区 / 时间解析 / key 排序 单元测试（35 项）
+    ├── entry.test.mjs         # Worker 入口、路由边界、Webhook 安全校验与自注册（39 项）
+    └── e2e.test.mjs           # 全链路集成测试，mock 掉全部外部依赖（75 项）
 ```
