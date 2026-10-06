@@ -71,7 +71,7 @@ export default {
     weather_shanghai: {
       desc: '一键查看上海天气',
       usage: '/weather_shanghai  |  /weather_shanghai sub [HH:MM]',
-      alias: ['上海'],
+      alias: ['shanghai'],
       detail: [
         '城市固定为上海，无需输入城市名：',
         '  <code>/weather_shanghai</code> — 立即查看上海天气（实况 + 逐小时 + 未来 3 天 + 空气质量）',
